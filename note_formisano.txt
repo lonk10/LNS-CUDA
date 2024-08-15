@@ -1,0 +1,24 @@
+prendere completamente a caso i nodi, anche se sono tutti nella stessa partizione
+generazione numeri random lato cpu è ok
+
+si può provare a fare repair in modo tale che accept sia sempre vero (ottimizazzione possibile)
+
+sol. migliore, quando F(Si) è 1 per tutti gli Si
+
+vogliamo costo più alto
+
+no matrice di adiacenza
+
+rappresentazione CSR (accesso coalesced possibile) e CSC
+vedere anche coo (e gli altri tanto per)
+
+fare impl seriale per check
+
+input: grafo (nodi e archi)
+file testo:
+	n_nodi n_archi n_partizioni
+	peso_nodo partizione
+	
+	(n1 n2 peso_arco)
+	
+si potrebbe fare lettura input parallela (vedere in finale)
