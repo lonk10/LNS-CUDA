@@ -171,35 +171,80 @@ __global__ void destroy(int *parts, int *destr_mask, int n, int m, int *int_cost
 
 // Assigns n*m/100 nodes to random partions
 
-__global__ void assignToParts(int *destr_mask, int n, int m, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
+__global__ void assignToParts(int n, int node, int parts*, int *result, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
     //should be a parallel reduction here
     int k = blockIdx.x;
     int ind = threadIdx.x;
-    extern __shared___ int ext_result;
-    extern __shared___ int int_result;
-    if (threadIdx.x == 0){
-        ext_result = ext_costs[k];
-        int_result = int_costs[k];
+    extern __shared___ int sdata_i[];
+    int start_r = csr_rep -> offset[node];
+    int end_r = csr_rep -> offset[node+1];
+    int start_c = csc_rep -> offset[node];
+    int end_c = csc_rep -> offset[node+1];
+
+    int r_size = end_r - start_r;
+    int c_size = end_c - start_c;
+    int max_size = r_size > c_size ? r_size : c_size;
+    if (ind == 0){
+        sdata_i = (int *) cudaMalloc(sizeof(int)*(max_size));
+        sdata_e = (int *) cudaMalloc(sizeof(int)*(max_size));
     }
-    __synchthreads(); // wait for initializiation
+    __synchthreads(); // wait for allocation
+    // initialization
+    sdata_i[tid] = 0;
+    sdata_e[tid] = 0;
+    __synchthreads();
 
-    csr_rep -> values[ind];
-    csc_rep -> values[ind];
+    // gather values
+    int node;
+    if (ind < r_size){
+        node = csr_rep -> col_indexes[start_r + ind];
+        if (parts[k*n+node]){
+            sdata_i[ind] = csr_rep -> values[start_r + ind];
+        } else {
+            sdata_e[ind] = csr_rep -> values[start_r + ind];
+        }
+    }
+    if (ind < r_size){
+        node = csc_rep -> row_indexes[start_c + ind];
+        if (parts[k*n+node]){
+            sdata_i[ind] = csc_rep -> values[start_c + ind];
+        } else {
+            sdata_e[ind] = csc_rep -> values[start_c + ind];
+        }
+    }
+    __synchthreads();
 
+    // reduction
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1){
+        if (ind < stride){
+            sdata_i[ind] += sdata_i[ind + stride];
+            sdata_e[ind] += sdata_e[ind + stride];
+        }
+        __synchthreads();
+    }
+
+    // store final result
+    if (ind == 0){
+        int mu_k = 2*(int_costs[k] + sdata_i[0]);
+        *result[k] = 100*(mu_k / (mu_k + sdata_e[0]));
+    }
 }
 
-__host__ void repair(int *parts, int *destr_mask, int n, int m, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
+__host__ void repair(int *parts, int k, int *destr_mask, int n, int m, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
     //int i = 0;
     int node;
+    float *result = (float *) cudaMalloc(sizeof(float)*k);
+    int asgn;
     for (int i = 0; i < (n*m/100); i++){
         //k = asgn_mask[i];
         node = destr_mask[i];
-        int start = csr_rep -> offsets[node];
-        int end = csr_rep -> offsets[node+1];
-        if (end - start > 0)
-            assignToParts<<k, end-start>>(node);
-        //printf("added node %d to part %d\n", j, k);
-        //addToCost(parts, k, n, node, int_costs, ext_costs, csr_rep, csc_rep);
+        assignToParts<<k, THREADS_PER_BLOCK>>(n, node, csr_rep, csc_rep);
+        cudaDeviceSynchronize();
+        asgn = max_part(result);
+        
+        //actual assign
+        parts[asgn*n+node] == 1;
+        temp_cost = max(result);
     }
 }
 
@@ -260,7 +305,6 @@ void lns(int *in_parts, int *weights, int parts_num, int nodes_num, int edges_nu
         //repair step
         computeRandomAssignment(asgn_mask, nodes_num, m, parts_num);
         repair(temp, destr_mask, asgn_mask, nodes_num, m, temp_int_cost, temp_ext_cost, row_rep, col_rep);
-        cudaDeviceSynchronize();
 
         //printf("Accept step %d\n", iter);
         //accept step
