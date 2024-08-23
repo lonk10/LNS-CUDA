@@ -22,3 +22,60 @@ file testo:
 	(n1 n2 peso_arco)
 	
 si potrebbe fare lettura input parallela (vedere in finale)
+
+
+destroy e repair fanno n*m/100 step al posto di n (sempre O(n) tho)
+
+strutture dati:
+CSR, CSC per gli archi
+array binario k*n per le partizioni
+array n*m/100 per le maschere per destroy e repair
+array k per i node cost delle partizioni
+array k per gli edge cost delle partizioni
+
+
+k blocchi, ogni blocco i usa parts[i*n,...,i*n + n-1]
+compute cost da fare con parallel reduction
+mem globale read only
+S(F(Si)) float issue
+
+
+random mask gen
+destroy
+synch
+random mask gen
+repair
+synch
+reduction for new cost
+
+global memory:
+CSR, CSC, node weights, best cost, best partition
+
+block memory:
+partition costs
+partition nodes // potrebbe essere troppa memoria! 48k nodi max? // forse meglio in global!
+
+
+destroy
+	if node is present
+		remove node 			- 1 op
+		remove node cost		- 1 op
+		remove edge costs 		- up to n op (dynamic parallelism?)
+
+repair
+	if node has to be added
+		add node				- 1 op
+		add node cost			- 1 op
+		add edge costs 			- up to n op (dynamic parallelism?)
+		
+repair non completamente a caso, vedere per ogni tanto quanto cambia il costo per ogni partizione!! parallello
+fare tutto in parallelo?
+		
+		
+moltiplicare numeratore float
+se no usare i double ma fanno schifo
+usare repo di grafi?
+se no fare grafi a caso
+consiglio: 	
+	
+usare bitmap o l'int per più nodi
