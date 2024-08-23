@@ -81,7 +81,7 @@ void computeAllEdgeCost(int *parts, CSR *row_rep, CSC *col_rep, int parts_num, i
 
 // Random functions
 
-// Stores n*m/100 UNIQUE values in mask
+// Stores n*m/100 UNIQUE values that go from 0 to n in mask
 void computeRandomMask(int * mask, int n, int m){
     int i = 0;
     int max = n*m/100;
@@ -101,12 +101,14 @@ void computeRandomMask(int * mask, int n, int m){
     free(check);
 }
 
+// Stores n*m/100 values from 0 to p in mask
 void computeRandomAssignment(int * mask, int n, int m, int p){
     for (int i = 0; i < (n*m/100); i++){
         mask[i] = rand() % p;
     }
 }
 
+// Removes costs tied to node n in partition k
 void removeFromCost(int *parts, int k, int n, int node, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
     int res = 0;
     int start = csr_rep -> offsets[node];
@@ -129,6 +131,7 @@ void removeFromCost(int *parts, int k, int n, int node, int *int_costs, int *ext
     }
 }
 
+// Adds costs tied to node n in partition k
 int addToCost(int *parts, int k, int n, int node, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
     int res = 0;
     int start = csr_rep -> offsets[node];
@@ -152,46 +155,51 @@ int addToCost(int *parts, int k, int n, int node, int *int_costs, int *ext_costs
     return res;
 }
 
-void destroy(int *parts, int k, int *destr_mask, int n, int m, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
-    int ind;
-    /*
-    for (int i = 0; i < k; i++){
-        for (int j = 0; j < n; j++){
-            ind = i*n+j;
-            if (destr_mask[j] == 1 && parts[ind] == destr_mask[j]){
-                parts[ind] = 0;
-                //printf("destroyed node %d from part %d\n", j, i);
-                edge_costs[k] -= removeFromCost(parts, k, n, j, edge_costs, csr_rep, csc_rep);
-                node_costs[k] -= weights[j];
-                //printf("updated costs\n");
-            }
-        }
-    }*/
-    int node;
-    for (int i = 0; i < k; i++){
-        for (int j = 0; j < (n*m/100); j++){
-            node = destr_mask[j];
-            ind = i*n+node;
-            if (parts[ind] == 1){
-                parts[ind] = 0;
-                //printf("destroyed node %d from part %d\n", j, i);
-                removeFromCost(parts, k, n, node, int_costs, ext_costs, csr_rep, csc_rep);
-                //printf("updated costs\n");
-            }
-        }
+// Given k partitions and n*m/100 threads per block
+// each threads check if the destr_mask[threadIdx.x] node is present in its block's 
+// partition and destroys it if necessary
+// usage should be destroy<<k, n*m/100>>
+// costs update should be handled by another function
+
+__global__ void destroy(int *parts, int *destr_mask, int n, int m, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
+    int node = destr_mask[threadIdx.x];
+    int ind = blockIdx.x * blockDim.x + node;
+    if (parts[ind] == 1){
+        parts[ind] = 0;
     }
 }
 
-void repair(int *parts, int *destr_mask, int *asgn_mask, int n, int m, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
+// Assigns n*m/100 nodes to random partions
+
+__global__ void assignToParts(int *destr_mask, int n, int m, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
+    //should be a parallel reduction here
+    int k = blockIdx.x;
+    int ind = threadIdx.x;
+    extern __shared___ int ext_result;
+    extern __shared___ int int_result;
+    if (threadIdx.x == 0){
+        ext_result = ext_costs[k];
+        int_result = int_costs[k];
+    }
+    __synchthreads(); // wait for initializiation
+
+    csr_rep -> values[ind];
+    csc_rep -> values[ind];
+
+}
+
+__host__ void repair(int *parts, int *destr_mask, int n, int m, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
     //int i = 0;
-    int k;
     int node;
     for (int i = 0; i < (n*m/100); i++){
-        k = asgn_mask[i];
+        //k = asgn_mask[i];
         node = destr_mask[i];
-        parts[k*n+node] = 1;
+        int start = csr_rep -> offsets[node];
+        int end = csr_rep -> offsets[node+1];
+        if (end - start > 0)
+            assignToParts<<k, end-start>>(node);
         //printf("added node %d to part %d\n", j, k);
-        addToCost(parts, k, n, node, int_costs, ext_costs, csr_rep, csc_rep);
+        //addToCost(parts, k, n, node, int_costs, ext_costs, csr_rep, csc_rep);
     }
 }
 
@@ -245,12 +253,14 @@ void lns(int *in_parts, int *weights, int parts_num, int nodes_num, int edges_nu
         //printf("Destroy step %d\n", iter);
         //destroy step
         computeRandomMask(destr_mask, nodes_num, m);
-        destroy(temp, parts_num, destr_mask, nodes_num, m, temp_int_cost, temp_ext_cost, row_rep, col_rep);
+        destroy<<k, n*m/100>>(temp, parts_num, destr_mask, nodes_num, m, temp_int_cost, temp_ext_cost, row_rep, col_rep);
+        cudaDeviceSynchronize();
 
         //printf("Repair step %d\n", iter);
         //repair step
         computeRandomAssignment(asgn_mask, nodes_num, m, parts_num);
         repair(temp, destr_mask, asgn_mask, nodes_num, m, temp_int_cost, temp_ext_cost, row_rep, col_rep);
+        cudaDeviceSynchronize();
 
         //printf("Accept step %d\n", iter);
         //accept step
@@ -261,9 +271,6 @@ void lns(int *in_parts, int *weights, int parts_num, int nodes_num, int edges_nu
                 best_cost = new_cost;
                 memcpy(best, temp, nodes_num*parts_num*sizeof(int));
         }
-        //debug only
-        //checkNodesPerPart(temp, parts_num, nodes_num);
-        //checkPartsPerNode(temp, parts_num, nodes_num);
     }
     printf("Final cost is: %f\n", best_cost);
     printf("Partitions were:\n");
