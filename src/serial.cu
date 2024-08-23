@@ -53,10 +53,11 @@ int *computeNodeCost(int *parts, int *weights, int parts_num, int nodes_num, int
     return costs;
 }
 
-int computeEdgeCost(int *parts, int part_id, CSR *row_rep, CSC *col_rep, int parts_num, int nodes_num, int edges_num){
+void computeEdgeCost(int *parts, int part_id, CSR *row_rep, CSC *col_rep, int parts_num, int nodes_num, int edges_num, int *int_cost, int *ext_cost){
     int ind = 0;
     int start, end;
-    int res = 0;
+    int int_res = 0;
+    int ext_res = 0;
     int node;
     for (int i = 0; i < nodes_num; i++){
         ind = part_id*nodes_num+i;
@@ -66,7 +67,11 @@ int computeEdgeCost(int *parts, int part_id, CSR *row_rep, CSC *col_rep, int par
             end = row_rep -> offsets[i+1];
             for (int j = start; j < end; j++){
                 node = row_rep -> col_indexes[j];
-                if (!parts[node]) res += row_rep -> values[j];
+                if (!parts[node]) {
+                    int_res += row_rep -> values[j];
+                } else {
+                    ext_res += row_rep -> values[j];
+                }
             }
             // in edges
             
@@ -74,21 +79,27 @@ int computeEdgeCost(int *parts, int part_id, CSR *row_rep, CSC *col_rep, int par
             end = col_rep -> offsets[i+1];
             for (int j = start; j < end; j++){
                 node = col_rep -> row_indexes[j];
-                if (!parts[node]) res += col_rep -> values[j];
+                if (!parts[node]) {
+                    int_res += col_rep -> values[j];
+                } else {
+                    ext_res += col_rep -> values[j];
+                }
             }
         }
     }
-    return res;
+    *int_cost = int_res;
+    *ext_cost = ext_res;
 }
 
-void computeAllEdgeCost(int *parts, CSR *row_rep, CSC *col_rep, int parts_num, int nodes_num, int edges_num, int *costs){
+void computeAllEdgeCost(int *parts, CSR *row_rep, CSC *col_rep, int parts_num, int nodes_num, int edges_num, int *int_costs, int *ext_costs){
     for (int i = 0; i < parts_num; i++){
-        costs[i] = computeEdgeCost(parts, i, row_rep, col_rep, parts_num, nodes_num, edges_num);
+        computeEdgeCost(parts, i, row_rep, col_rep, parts_num, nodes_num, edges_num, &int_costs[i], &ext_costs[i]);
     }
 }
 
 // Random functions
 
+/*
 void computeRandomMask(int * mask, int n, int m){
     int ind;
     for (int i = 0; i < (n*m/100); i++){
@@ -96,6 +107,23 @@ void computeRandomMask(int * mask, int n, int m){
         if (mask[ind] == 1) i=i-1;
         else mask[ind] = 1;
     }
+}*/
+void computeRandomMask(int * mask, int n, int m){
+    int i = 0;
+    int max = n*m/100;
+    int *check = (int*) malloc(n*sizeof(int));
+    int rand_node;
+    for (int j = 0; j < n; j++){
+        check[j] = 0;
+    }
+    while (i < max){
+        rand_node = rand() % n;
+        if (check[rand_node] == 0){
+            mask[i] = rand_node;
+            i++;
+        }
+    }
+    free(check);
 }
 
 void computeRandomAssignment(int * mask, int n, int m, int p){
@@ -104,46 +132,54 @@ void computeRandomAssignment(int * mask, int n, int m, int p){
     }
 }
 
-int removeFromCost(int *parts, int k, int n, int node, int *costs, CSR *csr_rep, CSC *csc_rep){
+void removeFromCost(int *parts, int k, int n, int node, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
     int res = 0;
     int start = csr_rep -> offsets[node];
     int end = csr_rep -> offsets[node+1];
     for (int z = start; z < end; z++){
         if (parts[k*n+z] == 0){ // only remove cost of edges going in/out of the partition
-            costs[k] -= csr_rep -> values[z];
+            ext_costs[k] -= csr_rep -> values[z];
+        } else {
+            int_costs[k] -= csr_rep -> values[z];
         }
     }
     start = csc_rep -> offsets[node];
     end = csc_rep -> offsets[node+1];
     for (int z = start; z < end; z++){
         if (parts[k*n+z] == 0){ // only add cost of edges going into the partition
-            costs[k] -= csc_rep -> values[z];
+            ext_costs[k] -= csc_rep -> values[z];
+        } else {
+            int_costs[k] -= csc_rep -> values[z];
         }
     }
-    return res;
 }
 
-int addToCost(int *parts, int k, int n, int node, int *costs, CSR *csr_rep, CSC *csc_rep){
+int addToCost(int *parts, int k, int n, int node, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
     int res = 0;
     int start = csr_rep -> offsets[node];
     int end = csr_rep -> offsets[node+1];
     for (int z = start; z < end; z++){
         if (parts[k*n+z] == 0){ // only add cost of edges going out of the partition
-            costs[k] += csr_rep -> values[z];
+            ext_costs[k] += csr_rep -> values[z];
+        } else {
+            int_costs[k] += csr_rep -> values[z];
         }
     }
     start = csc_rep -> offsets[node];
     end = csc_rep -> offsets[node+1];
     for (int z = start; z < end; z++){
         if (parts[k*n+z] == 0){ // only add cost of edges going into the partition
-            costs[k] += csc_rep -> values[z];
+            ext_costs[k] += csc_rep -> values[z];
+        } else {
+            int_costs[k] += csc_rep -> values[z];
         }
     }
     return res;
 }
 
-void destroy(int *parts, int k, int *destr_mask, int n, int *weights, int *node_costs, int *edge_costs, CSR *csr_rep, CSC *csc_rep){
+void destroy(int *parts, int k, int *destr_mask, int n, int m, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
     int ind;
+    /*
     for (int i = 0; i < k; i++){
         for (int j = 0; j < n; j++){
             ind = i*n+j;
@@ -155,31 +191,42 @@ void destroy(int *parts, int k, int *destr_mask, int n, int *weights, int *node_
                 //printf("updated costs\n");
             }
         }
-    }
-}
-
-void repair(int *parts, int *destr_mask, int *asgn_mask, int n, int *weights, int *node_costs, int *edge_costs, CSR *csr_rep, CSC *csc_rep){
-    int i = 0;
-    int k;
-    for (int j = 0; j < n; j++){
-        if (destr_mask[j] == 1){
-            k = asgn_mask[i];
-            parts[k*n+j] = 1;
-            //printf("added node %d to part %d\n", j, k);
-            edge_costs[k] += addToCost(parts, k, n, j, edge_costs, csr_rep, csc_rep);
-            node_costs[k] += weights[j];
-            i++;
+    }*/
+    int node;
+    for (int i = 0; i < k; i++){
+        for (int j = 0; j < (n*m/100); j++){
+            node = destr_mask[j];
+            ind = i*n+node;
+            if (parts[ind] == 1){
+                parts[ind] = 0;
+                //printf("destroyed node %d from part %d\n", j, i);
+                removeFromCost(parts, k, n, node, int_costs, ext_costs, csr_rep, csc_rep);
+                //printf("updated costs\n");
+            }
         }
     }
 }
 
-float computeCost(int *node_costs, int *edge_costs, int k){
+void repair(int *parts, int *destr_mask, int *asgn_mask, int n, int m, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
+    //int i = 0;
+    int k;
+    int node;
+    for (int i = 0; i < (n*m/100); i++){
+        k = asgn_mask[i];
+        node = destr_mask[i];
+        parts[k*n+node] = 1;
+        //printf("added node %d to part %d\n", j, k);
+        addToCost(parts, k, n, node, int_costs, ext_costs, csr_rep, csc_rep);
+    }
+}
+
+float computeCost(int *int_costs, int *ext_costs, int k){
     float res = 0;
     float u = 0;
     for (int i = 0; i < k; i++){
-        u = (float) 2*(node_costs[i]);
-        printf("%f / (%f + %d = %f) = %f\n", u, u, edge_costs[i], (u+(float)edge_costs[i]), (u/ (u+(float)edge_costs[i])));
-        res += u / (u + (float) edge_costs[i]); 
+        u = (float) 2*(int_costs[i]);
+        printf("%f / (%f + %d = %f) = %f\n", u, u, ext_costs[i], (u+(float)ext_costs[i]), (u/ (u+(float)ext_costs[i])));
+        res += u / (u + (float) ext_costs[i]); 
     }
     return res;
 }
@@ -190,20 +237,21 @@ void lns(int *in_parts, int *weights, int parts_num, int nodes_num, int edges_nu
         best[i] = in_parts[i];
     }
     //compute node costs
-    int *node_cost = (int *)malloc(parts_num*sizeof(int));
-    int *temp_node_cost = (int *)malloc(parts_num*sizeof(int));
-    computeNodeCost(best, weights, parts_num, nodes_num, node_cost);
+    int *int_cost = (int *)malloc(parts_num*sizeof(int));
+    int *temp_int_cost = (int *)malloc(parts_num*sizeof(int));
+    //computeNodeCost(best, weights, parts_num, nodes_num, node_cost);
     //compute edge costs
-    int *edge_cost = (int *)malloc(parts_num*sizeof(int));
-    int *temp_edge_cost = (int *)malloc(parts_num*sizeof(int));
-    computeAllEdgeCost(best, row_rep, col_rep, parts_num, nodes_num, edges_num, edge_cost);
+    int *ext_cost = (int *)malloc(parts_num*sizeof(int));
+    int *temp_ext_cost = (int *)malloc(parts_num*sizeof(int));
+    computeAllEdgeCost(best, row_rep, col_rep, parts_num, nodes_num, edges_num, int_cost, ext_cost);
     for (int i = 0; i < parts_num; i++){
-        printf("init node cost %d \ninit edge cost %d\n", node_cost[i], edge_cost[i]);
+        printf("init node cost %d \ninit edge cost %d\n", int_cost[i], ext_cost[i]);
     }
-    float best_cost = computeCost(node_cost, edge_cost, parts_num);
+    float best_cost = computeCost(int_cost, ext_cost, parts_num);
     float new_cost;
-    int *destr_mask = (int *)malloc(nodes_num*sizeof(int));
-    int *asgn_mask = (int *)malloc((nodes_num*m/100)*sizeof(int));
+    int destr_nodes = nodes_num*m/100;
+    int *destr_mask = (int *)malloc(destr_nodes*sizeof(int));
+    int *asgn_mask = (int *)malloc(destr_nodes*sizeof(int));
     int *temp = (int *) malloc(nodes_num*parts_num*sizeof(int));
     srand(time(NULL));
 
@@ -212,27 +260,27 @@ void lns(int *in_parts, int *weights, int parts_num, int nodes_num, int edges_nu
     for (int iter = 0; iter < MAX_ITER; iter++){
         //printf("Iteration %d start\n", iter);
         //reset values
-        for (int i = 0; i < nodes_num; i++){
+        for (int i = 0; i < destr_nodes; i++){
             destr_mask[i] = 0;
         }
         memcpy(temp, in_parts, nodes_num*parts_num*sizeof(int));
-        memcpy(temp_node_cost, node_cost, parts_num*sizeof(int));
-        memcpy(temp_edge_cost, edge_cost, parts_num*sizeof(int));
+        memcpy(temp_int_cost, int_cost, parts_num*sizeof(int));
+        memcpy(temp_ext_cost, ext_cost, parts_num*sizeof(int));
 
         //printf("Destroy step %d\n", iter);
         //destroy step
         computeRandomMask(destr_mask, nodes_num, m);
-        destroy(temp, parts_num, destr_mask, nodes_num, weights, temp_node_cost, temp_edge_cost, row_rep, col_rep);
+        destroy(temp, parts_num, destr_mask, nodes_num, m, temp_int_cost, temp_ext_cost, row_rep, col_rep);
 
         //printf("Repair step %d\n", iter);
         //repair step
         computeRandomAssignment(asgn_mask, nodes_num, m, parts_num);
-        repair(temp, destr_mask, asgn_mask, nodes_num, weights, temp_node_cost, temp_edge_cost, row_rep, col_rep);
+        repair(temp, destr_mask, asgn_mask, nodes_num, m, temp_int_cost, temp_ext_cost, row_rep, col_rep);
 
         //printf("Accept step %d\n", iter);
         //accept step
         if (checkMass(temp, weights, parts_num, nodes_num, max_mass)){
-            new_cost = computeCost(temp_node_cost, temp_edge_cost, parts_num);
+            new_cost = computeCost(temp_int_cost, temp_ext_cost, parts_num);
             if (new_cost > best_cost)
             printf("New best cost is: %f\n", new_cost);
                 best_cost = new_cost;
@@ -259,7 +307,11 @@ void lns(int *in_parts, int *weights, int parts_num, int nodes_num, int edges_nu
         }
         printf("\n");
     }
+    //printf("snip:\n");
     free(destr_mask);
+    //printf("snapp:\n");
+    free(asgn_mask);
+    //printf("snoop:\n");
 }
 
 int main(){
