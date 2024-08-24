@@ -1,159 +1,13 @@
+#include <cuda.h>
 #include <cuda_runtime_api.h> // cudaMalloc, cudaMemcpy, etc.
 #include <cusparse.h>         // cusparseSparseToDense
 #include <stdio.h>           
 #include <stdlib.h>
 #include "../include/lns.cuh"
 #include "../include/init.cuh"
+#include "../include/util.cuh"
 
-
-
-
-int computeMass(int ind, int *parts, int nodes_num, int *weights){
-    int tot_mass = 0;
-    for (int i = 0; i < nodes_num; i++){
-        tot_mass += parts[ind*nodes_num+i]*weights[i];
-    }
-    return tot_mass;
-}
-
-int checkMass(int *parts, int *weights, int parts_num, int nodes_num, int max_mass){
-    for (int i = 0; i < parts_num; i++){
-        if (computeMass(i, parts, nodes_num, weights) > max_mass)
-            return 0;
-    }
-    return 1;
-}
-
-int *computeNodeCost(int *parts, int *weights, int parts_num, int nodes_num, int *costs){
-    for (int i = 0; i < parts_num; i++) costs[i] = 0;
-
-    for (int i = 0; i < parts_num; i++){
-        for (int j = 0; j < nodes_num; j++){
-            costs[i] += parts[i*nodes_num + j] * weights[j];
-        }
-    }
-    return costs;
-}
-
-void computeEdgeCost(int *parts, int part_id, CSR *row_rep, CSC *col_rep, int parts_num, int nodes_num, int edges_num, int *int_cost, int *ext_cost){
-    int ind = 0;
-    int start, end;
-    int int_res = 0;
-    int ext_res = 0;
-    int node;
-    for (int i = 0; i < nodes_num; i++){
-        ind = part_id*nodes_num+i;
-        if (parts[ind]){
-            // out edges
-            start = row_rep -> offsets[i];
-            end = row_rep -> offsets[i+1];
-            for (int j = start; j < end; j++){
-                node = row_rep -> col_indexes[j];
-                if (!parts[node]) {
-                    int_res += row_rep -> values[j];
-                } else {
-                    ext_res += row_rep -> values[j];
-                }
-            }
-            // in edges
-            
-            start = col_rep -> offsets[i];
-            end = col_rep -> offsets[i+1];
-            for (int j = start; j < end; j++){
-                node = col_rep -> row_indexes[j];
-                if (!parts[node]) {
-                    int_res += col_rep -> values[j];
-                } else {
-                    ext_res += col_rep -> values[j];
-                }
-            }
-        }
-    }
-    *int_cost = int_res;
-    *ext_cost = ext_res;
-}
-
-void computeAllEdgeCost(int *parts, CSR *row_rep, CSC *col_rep, int parts_num, int nodes_num, int edges_num, int *int_costs, int *ext_costs){
-    for (int i = 0; i < parts_num; i++){
-        computeEdgeCost(parts, i, row_rep, col_rep, parts_num, nodes_num, edges_num, &int_costs[i], &ext_costs[i]);
-    }
-}
-
-// Random functions
-
-// Stores n*m/100 UNIQUE values that go from 0 to n in mask
-void computeRandomMask(int * mask, int n, int m){
-    int i = 0;
-    int max = n*m/100;
-    int *check = (int*) malloc(n*sizeof(int));
-    int rand_node;
-    for (int j = 0; j < n; j++){    // init
-        check[j] = 0;
-    }
-    while (i < max){
-        rand_node = rand() % n;
-        if (check[rand_node] == 0){ // check if node has already been generated
-            mask[i] = rand_node;
-            check[rand_node] = 1;   // set node to generated
-            i++;
-        }
-    }
-    free(check);
-}
-
-// Stores n*m/100 values from 0 to p in mask
-void computeRandomAssignment(int * mask, int n, int m, int p){
-    for (int i = 0; i < (n*m/100); i++){
-        mask[i] = rand() % p;
-    }
-}
-
-// Removes costs tied to node n in partition k
-void removeFromCost(int *parts, int k, int n, int node, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
-    int res = 0;
-    int start = csr_rep -> offsets[node];
-    int end = csr_rep -> offsets[node+1];
-    for (int z = start; z < end; z++){
-        if (parts[k*n+z] == 0){ // only remove cost of edges going in/out of the partition
-            ext_costs[k] -= csr_rep -> values[z];
-        } else {
-            int_costs[k] -= csr_rep -> values[z];
-        }
-    }
-    start = csc_rep -> offsets[node];
-    end = csc_rep -> offsets[node+1];
-    for (int z = start; z < end; z++){
-        if (parts[k*n+z] == 0){ // only add cost of edges going into the partition
-            ext_costs[k] -= csc_rep -> values[z];
-        } else {
-            int_costs[k] -= csc_rep -> values[z];
-        }
-    }
-}
-
-// Adds costs tied to node n in partition k
-int addToCost(int *parts, int k, int n, int node, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
-    int res = 0;
-    int start = csr_rep -> offsets[node];
-    int end = csr_rep -> offsets[node+1];
-    for (int z = start; z < end; z++){
-        if (parts[k*n+z] == 0){ // only add cost of edges going out of the partition
-            ext_costs[k] += csr_rep -> values[z];
-        } else {
-            int_costs[k] += csr_rep -> values[z];
-        }
-    }
-    start = csc_rep -> offsets[node];
-    end = csc_rep -> offsets[node+1];
-    for (int z = start; z < end; z++){
-        if (parts[k*n+z] == 0){ // only add cost of edges going into the partition
-            ext_costs[k] += csc_rep -> values[z];
-        } else {
-            int_costs[k] += csc_rep -> values[z];
-        }
-    }
-    return res;
-}
+#define THREADS_PER_BLOCK 256
 
 // Given k partitions and n*m/100 threads per block
 // each threads check if the destr_mask[threadIdx.x] node is present in its block's 
@@ -161,58 +15,63 @@ int addToCost(int *parts, int k, int n, int node, int *int_costs, int *ext_costs
 // usage should be destroy<<k, n*m/100>>
 // costs update should be handled by another function
 
-__global__ void destroy(int *parts, int *destr_mask, int n, int m, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
-    int node = destr_mask[threadIdx.x];
-    int ind = blockIdx.x * blockDim.x + node;
-    if (parts[ind] == 1){
-        parts[ind] = 0;
+__global__ void destroy(int *parts, int *destr_mask, int m){
+    int tid = threadIdx.x;
+    if (tid < m){
+        int node = destr_mask[threadIdx.x];
+        int ind = blockIdx.x * blockDim.x + node;
+        if (parts[ind] == 1){
+            parts[ind] = 0;
+        }
     }
 }
 
 // Assigns n*m/100 nodes to random partions
 
-__global__ void assignToParts(int n, int node, int parts*, int *result, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
+__global__ void assignToParts(int n, int node, int *parts, float *result, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
     //should be a parallel reduction here
     int k = blockIdx.x;
     int ind = threadIdx.x;
-    extern __shared___ int sdata_i[];
-    int start_r = csr_rep -> offset[node];
-    int end_r = csr_rep -> offset[node+1];
-    int start_c = csc_rep -> offset[node];
-    int end_c = csc_rep -> offset[node+1];
+    extern __shared__ int sdata_i[];
+    extern __shared__ int sdata_e[];
+
+    int start_r = csr_rep -> offsets[node];
+    int end_r = csr_rep -> offsets[node+1];
+    int start_c = csc_rep -> offsets[node];
+    int end_c = csc_rep -> offsets[node+1];
 
     int r_size = end_r - start_r;
     int c_size = end_c - start_c;
     int max_size = r_size > c_size ? r_size : c_size;
     if (ind == 0){
-        sdata_i = (int *) cudaMalloc(sizeof(int)*(max_size));
-        sdata_e = (int *) cudaMalloc(sizeof(int)*(max_size));
+        cudaMalloc( (void**)&sdata_i, max_size * sizeof(int));
+        cudaMalloc( (void**)&sdata_e, max_size * sizeof(int));
     }
-    __synchthreads(); // wait for allocation
+    __syncthreads(); // wait for allocation
     // initialization
-    sdata_i[tid] = 0;
-    sdata_e[tid] = 0;
-    __synchthreads();
+    sdata_i[ind] = 0;
+    sdata_e[ind] = 0;
+    __syncthreads();
 
     // gather values
-    int node;
+    int edge_node;
     if (ind < r_size){
-        node = csr_rep -> col_indexes[start_r + ind];
-        if (parts[k*n+node]){
+        edge_node = csr_rep -> col_indexes[start_r + ind];
+        if (parts[k*n+edge_node]){
             sdata_i[ind] = csr_rep -> values[start_r + ind];
         } else {
             sdata_e[ind] = csr_rep -> values[start_r + ind];
         }
     }
     if (ind < r_size){
-        node = csc_rep -> row_indexes[start_c + ind];
-        if (parts[k*n+node]){
+        edge_node = csc_rep -> row_indexes[start_c + ind];
+        if (parts[k*n+edge_node]){
             sdata_i[ind] = csc_rep -> values[start_c + ind];
         } else {
             sdata_e[ind] = csc_rep -> values[start_c + ind];
         }
     }
-    __synchthreads();
+    __syncthreads();
 
     // reduction
     for (int stride = blockDim.x / 2; stride > 0; stride >>= 1){
@@ -220,57 +79,62 @@ __global__ void assignToParts(int n, int node, int parts*, int *result, int *int
             sdata_i[ind] += sdata_i[ind + stride];
             sdata_e[ind] += sdata_e[ind + stride];
         }
-        __synchthreads();
+        __syncthreads();
     }
 
     // store final result
     if (ind == 0){
         int mu_k = 2*(int_costs[k] + sdata_i[0]);
-        *result[k] = 100*(mu_k / (mu_k + sdata_e[0]));
+        result[k] = 100*(mu_k / (mu_k + ext_costs[k] + sdata_e[0]));
     }
 }
 
 __host__ void repair(int *parts, int k, int *destr_mask, int n, int m, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
     //int i = 0;
     int node;
-    float *result = (float *) cudaMalloc(sizeof(float)*k);
+    float *result;
+    cudaMalloc( (void**)&result, k * sizeof(float));
     int asgn;
+    int temp_cost;
     for (int i = 0; i < (n*m/100); i++){
         //k = asgn_mask[i];
         node = destr_mask[i];
-        assignToParts<<k, THREADS_PER_BLOCK>>(n, node, csr_rep, csc_rep);
+        assignToParts<<<k, THREADS_PER_BLOCK>>>(n, node, parts, result, int_costs, ext_costs, csr_rep, csc_rep);
         cudaDeviceSynchronize();
-        asgn = max_part(result);
+        asgn = 0;
+        temp_cost = result[0];
+        for (int j = 0; j < k; j++){
+            if (result[j] > temp_cost){
+                asgn = j;
+                temp_cost = result[j];
+            }
+        }
         
         //actual assign
         parts[asgn*n+node] == 1;
-        temp_cost = max(result);
+    }
+    cudaFree(result);
+}
+
+__global__ void resetMask(int *mask, int size){
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid < size){
+        mask[tid] = 0;
     }
 }
 
-float computeCost(int *int_costs, int *ext_costs, int k){
-    float res = 0;
-    float u = 0;
-    for (int i = 0; i < k; i++){
-        u = (float) 2*(int_costs[i]);
-        printf("%f / (%f + %d = %f) = %f\n", u, u, ext_costs[i], (u+(float)ext_costs[i]), (u/ (u+(float)ext_costs[i])));
-        res += u / (u + (float) ext_costs[i]); 
-    }
-    return res;
-}
-
-void lns(int *in_parts, int *weights, int parts_num, int nodes_num, int edges_num, int max_mass, int m, CSR *row_rep, CSC *col_rep){
+void lns_v1(int *in_parts, int *weights, int parts_num, int nodes_num, int edges_num, int max_mass, int m, CSR *row_rep, CSC *col_rep){
     int *best = (int *) malloc(nodes_num*parts_num*sizeof(int));
     for (int i = 0; i < nodes_num*parts_num; i++){
         best[i] = in_parts[i];
     }
     //compute node costs
+    int *temp_int_cost, *temp_ext_cost;
+
     int *int_cost = (int *)malloc(parts_num*sizeof(int));
-    int *temp_int_cost = (int *)malloc(parts_num*sizeof(int));
-    //computeNodeCost(best, weights, parts_num, nodes_num, node_cost);
-    //compute edge costs
     int *ext_cost = (int *)malloc(parts_num*sizeof(int));
-    int *temp_ext_cost = (int *)malloc(parts_num*sizeof(int));
+    cudaMalloc( (void**)&temp_int_cost, parts_num * sizeof(int));
+    cudaMalloc( (void**)&temp_ext_cost, parts_num * sizeof(int));
     computeAllEdgeCost(best, row_rep, col_rep, parts_num, nodes_num, edges_num, int_cost, ext_cost);
     for (int i = 0; i < parts_num; i++){
         printf("init node cost %d \ninit edge cost %d\n", int_cost[i], ext_cost[i]);
@@ -278,9 +142,10 @@ void lns(int *in_parts, int *weights, int parts_num, int nodes_num, int edges_nu
     float best_cost = computeCost(int_cost, ext_cost, parts_num);
     float new_cost;
     int destr_nodes = nodes_num*m/100;
-    int *destr_mask = (int *)malloc(destr_nodes*sizeof(int));
-    int *asgn_mask = (int *)malloc(destr_nodes*sizeof(int));
-    int *temp = (int *) malloc(nodes_num*parts_num*sizeof(int));
+    int *d_destr_mask, *temp;
+    int *destr_mask = (int *) malloc(destr_nodes * sizeof(int));
+    cudaMalloc( (void**)&d_destr_mask, destr_nodes * sizeof(int));
+    cudaMalloc( (void**)&temp, nodes_num * parts_num * sizeof(int));
     srand(time(NULL));
 
     printf("Initial cost is: %f\n", best_cost);
@@ -291,20 +156,22 @@ void lns(int *in_parts, int *weights, int parts_num, int nodes_num, int edges_nu
         for (int i = 0; i < destr_nodes; i++){
             destr_mask[i] = 0;
         }
-        memcpy(temp, in_parts, nodes_num*parts_num*sizeof(int));
-        memcpy(temp_int_cost, int_cost, parts_num*sizeof(int));
-        memcpy(temp_ext_cost, ext_cost, parts_num*sizeof(int));
+        //resetMask<<<parts_num, THREADS_PER_BLOCK>>>(destr_mask, destr_nodes);
+        cudaMemcpy(temp, in_parts, nodes_num*parts_num*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(temp_int_cost, int_cost, parts_num*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(temp_ext_cost, ext_cost, parts_num*sizeof(int), cudaMemcpyHostToDevice);
 
         //printf("Destroy step %d\n", iter);
         //destroy step
         computeRandomMask(destr_mask, nodes_num, m);
-        destroy<<k, n*m/100>>(temp, parts_num, destr_mask, nodes_num, m, temp_int_cost, temp_ext_cost, row_rep, col_rep);
+        cudaMemcpy(d_destr_mask, destr_mask, destr_nodes*sizeof(int), cudaMemcpyHostToDevice);
+        destroy<<<parts_num, THREADS_PER_BLOCK>>>(temp, destr_mask, m);
         cudaDeviceSynchronize();
 
         //printf("Repair step %d\n", iter);
         //repair step
-        computeRandomAssignment(asgn_mask, nodes_num, m, parts_num);
-        repair(temp, destr_mask, asgn_mask, nodes_num, m, temp_int_cost, temp_ext_cost, row_rep, col_rep);
+        //computeRandomAssignment(asgn_mask, nodes_num, m, parts_num);
+        repair(temp, parts_num, destr_mask, nodes_num, m, temp_int_cost, temp_ext_cost, row_rep, col_rep);
 
         //printf("Accept step %d\n", iter);
         //accept step
@@ -334,67 +201,8 @@ void lns(int *in_parts, int *weights, int parts_num, int nodes_num, int edges_nu
         printf("\n");
     }
     //printf("snip:\n");
-    free(destr_mask);
+    cudaFree(destr_mask);
     //printf("snapp:\n");
-    free(asgn_mask);
+    //free(asgn_mask);
     //printf("snoop:\n");
-}
-
-int main(){
-    int nodes_num, edges_num, parts_num;
-    printf("Reading input...\n");
-    FILE *in_file  = fopen("graph.txt", "r");
-    char line[100];
-    if (in_file == NULL){  
-              printf("Error! Could not open file\n");
-              exit(-1); // must include stdlib.h
-            }
-    // read number of nodes, edges and partitions
-    fgets(line, 100, in_file);
-    sscanf(line, "%d %d %d", &nodes_num, &edges_num, &parts_num);
-    // init structures
-    int *weights = (int *) malloc(nodes_num*sizeof(int));
-    int *parts = (int *) malloc(nodes_num*sizeof(int));
-    int *partitions = (int *) malloc(parts_num*nodes_num*sizeof(int));
-    int *mat = (int *) malloc(nodes_num*nodes_num*sizeof(int));
-    // read rest of the input
-    readInput(in_file, partitions, weights, parts, nodes_num, edges_num, parts_num, mat);
-
-    // setup csr representation
-    int *h_csr_offsets = (int *) malloc((nodes_num + 1) * sizeof(int));
-    int *h_csr_columns = (int *) malloc(edges_num * sizeof(int));
-    int *h_csr_values = (int *) malloc(edges_num * sizeof(int));
-
-    csrSetup(nodes_num, edges_num, mat, h_csr_offsets, h_csr_columns, h_csr_values);
-
-    // setup csc representation
-    int *h_csc_offsets = (int *) malloc((nodes_num + 1) * sizeof(int));
-    int *h_csc_rows = (int *) malloc(edges_num * sizeof(int));
-    int *h_csc_values = (int *) malloc(edges_num * sizeof(int));
-
-    cscSetup(nodes_num, edges_num, mat, h_csc_offsets, h_csc_rows, h_csc_values);
-
-
-    // generate csr rep
-    // Device memory management
-
-    //csrTest(h_csr_offsets, h_csr_columns, h_csr_values, nodes_num, edges_num);
-    //cscTest(h_csc_offsets, h_csc_rows, h_csc_values, nodes_num, edges_num);
-
-    CSR *row_rep = (CSR*) malloc(sizeof(CSR));
-    row_rep -> offsets = h_csr_offsets;
-    row_rep -> col_indexes = h_csr_columns;
-    row_rep -> values = h_csr_values;
-
-    CSC *col_rep = (CSC*) malloc(sizeof(CSC));
-    col_rep -> offsets = h_csc_offsets;
-    col_rep -> row_indexes = h_csc_rows;
-    col_rep -> values = h_csc_values;
-
-    lns(partitions, weights, parts_num, nodes_num, edges_num, MAX_MASS, DESTR_PERCENT, row_rep, col_rep);
-
-    free(partitions);
-    free(weights);
-    free(parts);
-    return 1;
 }
