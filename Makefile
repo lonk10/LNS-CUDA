@@ -13,7 +13,7 @@ CUDA_ROOT_DIR=/usr/local/cuda
 # NVCC compiler options:
 NVCC=nvcc
 CUDA_TOOLKIT := $(shell dirname $$(command -v nvcc))/..
-NVCC_FLAGS= -I$(CUDA_TOOLKIT)/include --compiler-options=-Wall --compiler-options=-Wextra --compiler-options=-Wpedantic --compiler-options=-Wconversion
+NVCC_FLAGS= -I$(CUDA_TOOLKIT)/include --compiler-options=-Wall --compiler-options=-Wextra --compiler-options=-Wpedantic --compiler-options=-Wconversion -g
 NVCC_LIBS= -lcusparse
 
 # CUDA library directory:
@@ -44,7 +44,7 @@ INC_DIR = include
 EXE = run_test
 
 # Object files:
-OBJS = $(OBJ_DIR)/init.o
+OBJS = $(OBJ_DIR)/init.o $(OBJ_DIR)/util.o $(OBJ_DIR)/serial.o $(OBJ_DIR)/parallel_v1.o 
 
 ##########################################################
 
@@ -63,11 +63,23 @@ $(EXE) : $(OBJS)
 serial : $(OBJS) $(OBJ_DIR)/serial.o
 	$(NVCC) $(NVCC_FLAGS) $(OBJS) $(OBJ_DIR)/serial.o -o serial $(NVCC_LIBS)
 
+main: $(OBJS) $(OBJ_DIR)/main.o
+	$(NVCC) $(NVCC_FLAGS) $(OBJS) $(OBJ_DIR)/main.o -o main $(NVCC_LIBS)
+
 # Compile CUDA source files to object files:
-$(OBJ_DIR)/init.o : $(SRC_DIR)/init.cu $(INC_DIR)/init.cuh $(INC_DIR)/lns.cuh
+$(OBJ_DIR)/init.o : $(SRC_DIR)/init.cu $(INC_DIR)/init.cuh $(INC_DIR)/lns.cuh 
 	$(NVCC) $(NVCC_FLAGS) -c $< -o $@ $(NVCC_LIBS)
 
-$(OBJ_DIR)/serial.o : $(SRC_DIR)/serial.cu $(INC_DIR)/init.cuh $(INC_DIR)/lns.cuh
+$(OBJ_DIR)/util.o : $(SRC_DIR)/util.cu $(INC_DIR)/lns.cuh
+	$(NVCC) $(NVCC_FLAGS) -c $< -o $@ $(NVCC_LIBS)
+
+$(OBJ_DIR)/serial.o : $(SRC_DIR)/serial.cu $(INC_DIR)/init.cuh $(INC_DIR)/lns.cuh $(INC_DIR)/util.cuh
+	$(NVCC) $(NVCC_FLAGS) -c $< -o $@ $(NVCC_LIBS)
+
+$(OBJ_DIR)/parallel_v1.o : $(SRC_DIR)/parallel_v1.cu $(INC_DIR)/init.cuh $(INC_DIR)/lns.cuh $(INC_DIR)/util.cuh
+	$(NVCC) $(NVCC_FLAGS) -c $< -o $@ $(NVCC_LIBS)
+
+$(OBJ_DIR)/main.o : main.cu $(INC_DIR)/init.cuh $(INC_DIR)/lns.cuh $(INC_DIR)/util.cuh $(INC_DIR)/serial.cuh $(INC_DIR)/parallel_v1.cuh
 	$(NVCC) $(NVCC_FLAGS) -c $< -o $@ $(NVCC_LIBS)
 
 # Clean objects in object directory.
