@@ -11,27 +11,7 @@
 #define GRIDS 10
 #define BLOCKS_PER_GRID 256
 
-// Given k partitions and n*m/100 threads per block
-// each threads check if the destr_mask[threadIdx.x] node is present in its block's 
-// partition and destroys it if necessary
-// usage should be destroy<<k, n*m/100>>
-// costs update should be handled by another function
-
-__global__ void destroy(int *parts, int *d_destr_mask, int destr_nodes, int k, int n, CSR *row_rep, CSC *col_rep){
-    int tid = threadIdx.x;
-    if (tid < m){
-        int node = destr_mask[tid];
-        int ind = blockIdx.x * blockDim.x + node;
-        if (parts[ind] == 1){
-            parts[ind] = 0;
-            removeFromCosts<<<256, 256, 512>>>(parts, node, blockIdx.x, n, row_rep, col_rep);
-            cudaDeviceSynchronize();
-            printf("Thread %d of block %d destroyed node %d in partition %d\n", tid, blockIdx.x, node, blockIdx.x);
-        }
-    }
-}
-
-__global__ void removeFromCosts(int *parts, int node, int partition, int n, CSR *csr_rep, CSC *csc_rep){
+__global__ void removeFromCosts(int *parts, int node, int partition, int n, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep, int *block_sums_i, int *block_sums_e){
     int ind = blockIdx.x * blockDim.x + threadIdx.x;
     int tid = threadIdx.x;
     extern __shared__ int sdata[];
@@ -52,6 +32,7 @@ __global__ void removeFromCosts(int *parts, int node, int partition, int n, CSR 
         }
         sdata[tid] = 0;
         __syncthreads();
+        int edge_node;
         if (ind < r_size){
             edge_node = csr_rep -> col_indexes[start_r + ind];
             if (parts[partition*n+edge_node] == 1){
@@ -95,6 +76,35 @@ __global__ void removeFromCosts(int *parts, int node, int partition, int n, CSR 
             int_costs[partition] -= final_sum_i;
             ext_costs[partition] -= final_sum_e;
         }
+    }
+}
+
+// Given k partitions and n*m/100 threads per block
+// each threads check if the destr_mask[threadIdx.x] node is present in its block's 
+// partition and destroys it if necessary
+// usage should be destroy<<k, n*m/100>>
+// costs update should be handled by another function
+
+__global__ void destroy(int *parts, int *destr_mask, int destr_nodes, int k, int n, int *int_costs, int *ext_costs, CSR *row_rep, CSC *col_rep){
+    int tid = threadIdx.x;
+    if (tid < destr_nodes){
+        int node = destr_mask[tid];
+        int ind = blockIdx.x * blockDim.x + node;
+        int *block_sums_i, *block_sums_e;
+        cudaMalloc( (void**)&block_sums_i, 256 * sizeof(int));
+        cudaMalloc( (void**)&block_sums_e, 256 * sizeof(int));
+        if (parts[ind] == 1){
+            parts[ind] = 0;
+            //remove this
+            //use a destr_node sized mask to register where the node was
+            //or get it for in_parts (k checks needed), could stay serial tbh
+            //them call removeFromCosts for every node with the part as parameter
+            removeFromCosts<<<256, 256, 512>>>(parts, node, blockIdx.x, n, int_costs, ext_costs, row_rep, col_rep, block_sums_i, block_sums_e);
+            cudaDeviceSynchronize();
+            printf("Thread %d of block %d destroyed node %d in partition %d\n", tid, blockIdx.x, node, blockIdx.x);
+        }
+        cudaFree(block_sums_i);
+        cudaFree(block_sums_e);
     }
 }
 // Assigns n*m/100 nodes to random partions
@@ -334,9 +344,9 @@ void lns_v1(int *in_parts, int *weights, int parts_num, int nodes_num, int edges
         //destroy step
         computeRandomMask(destr_mask, nodes_num, m);
         cudaMemcpy(d_destr_mask, destr_mask, destr_nodes*sizeof(int), cudaMemcpyHostToDevice);
-        destroy<<<parts_num, nodes_num>>>(temp, d_destr_mask, destr_nodes, parts_num, nodes_num, d_row_rep, d_col_rep);
+        destroy<<<parts_num, nodes_num>>>(temp, d_destr_mask, destr_nodes, parts_num, nodes_num, d_temp_int_cost, d_temp_ext_cost, d_row_rep, d_col_rep);
         cudaDeviceSynchronize();
-        removeCosts<<<>>>(d_destr_mask, nodes_num, d_row_rep, d_col_rep)
+        //removeCosts<<<>>>(d_destr_mask, nodes_num, d_row_rep, d_col_rep)
         cudaDeviceSynchronize();
 
         //printf("Repair step %d\n", iter);
