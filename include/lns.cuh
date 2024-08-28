@@ -10,7 +10,7 @@ typedef struct  {
 } CSC;
 
 #define MAX_ITER 500
-#define MAX_MASS 50
+#define MAX_MASS 400
 #define DESTR_PERCENT 20
 
 #define CHECK_CUDA(func)                                                       \

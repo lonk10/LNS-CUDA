@@ -10,10 +10,13 @@ int computeMass(int ind, int *parts, int nodes_num, int *weights){
     return tot_mass;
 }
 
-int checkMass(int *parts, int *weights, int parts_num, int nodes_num, int max_mass){
+int checkMass(int *int_costs, int parts_num, int max_mass){
     for (int i = 0; i < parts_num; i++){
-        if (computeMass(i, parts, nodes_num, weights) > max_mass)
+        if (int_costs[i] > max_mass){
+            printf("mass check not passed, temp int cost[%d] is %d\n", i, int_costs[i]);
             return 0;
+        }
+        //printf("temp int cost[%d] is %d\n", i, int_costs[i]);
     }
     return 1;
 }
@@ -22,9 +25,9 @@ float computeCost(int *int_costs, int *ext_costs, int k){
     float res = 0;
     float u = 0;
     for (int i = 0; i < k; i++){
-        u = (float) 2*(int_costs[i]);
+        u = (float) (int_costs[i]);
         //printf("%f / (%f + %d = %f) = %f\n", u, u, ext_costs[i], (u+(float)ext_costs[i]), (u/ (u+(float)ext_costs[i])));
-        res += (u / (u + (float) ext_costs[i])); 
+        res += 100 * (u / (u + (float) ext_costs[i])); 
     }
     return res;
 }
@@ -44,7 +47,7 @@ void computeEdgeCost(int *parts, int part_id, CSR *row_rep, CSC *col_rep, int pa
             end = row_rep -> offsets[i+1];
             for (int j = start; j < end; j++){
                 node = row_rep -> col_indexes[j];
-                if (!parts[node]) {
+                if (parts[part_id*nodes_num+node]) {
                     int_res += row_rep -> values[j];
                 } else {
                     ext_res += row_rep -> values[j];
@@ -56,7 +59,7 @@ void computeEdgeCost(int *parts, int part_id, CSR *row_rep, CSC *col_rep, int pa
             end = col_rep -> offsets[i+1];
             for (int j = start; j < end; j++){
                 node = col_rep -> row_indexes[j];
-                if (!parts[node]) {
+                if (parts[part_id*nodes_num+node]) {
                     int_res += col_rep -> values[j];
                 } else {
                     ext_res += col_rep -> values[j];
@@ -64,27 +67,19 @@ void computeEdgeCost(int *parts, int part_id, CSR *row_rep, CSC *col_rep, int pa
             }
         }
     }
-    *int_cost = int_res;
-    *ext_cost = ext_res;
+    int_cost[part_id] = int_res;
+    ext_cost[part_id] = ext_res;
 }
 
 void computeAllEdgeCost(int *parts, CSR *row_rep, CSC *col_rep, int parts_num, int nodes_num, int edges_num, int *int_costs, int *ext_costs){
     for (int i = 0; i < parts_num; i++){
-        computeEdgeCost(parts, i, row_rep, col_rep, parts_num, nodes_num, edges_num, &int_costs[i], &ext_costs[i]);
+        computeEdgeCost(parts, i, row_rep, col_rep, parts_num, nodes_num, edges_num, int_costs, ext_costs);
     }
 }
 
 // Random functions
 
-/*
-void computeRandomMask(int * mask, int n, int m){
-    int ind;
-    for (int i = 0; i < (n*m/100); i++){
-        ind = rand() % n;
-        if (mask[ind] == 1) i=i-1;
-        else mask[ind] = 1;
-    }
-}*/
+
 void computeRandomMask(int * mask, int n, int m){
     int i = 0;
     int max = n*m/100;
@@ -97,6 +92,7 @@ void computeRandomMask(int * mask, int n, int m){
         rand_node = rand() % n;
         if (check[rand_node] == 0){
             mask[i] = rand_node;
+            check[rand_node] = 1;
             i++;
         }
     }

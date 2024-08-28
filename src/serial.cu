@@ -48,19 +48,6 @@ void computeRandomAssignment(int * mask, int n, int m, int p){
 
 void destroy(int *parts, int k, int *destr_mask, int n, int m, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
     int ind;
-    /*
-    for (int i = 0; i < k; i++){
-        for (int j = 0; j < n; j++){
-            ind = i*n+j;
-            if (destr_mask[j] == 1 && parts[ind] == destr_mask[j]){
-                parts[ind] = 0;
-                //printf("destroyed node %d from part %d\n", j, i);
-                edge_costs[k] -= removeFromCost(parts, k, n, j, edge_costs, csr_rep, csc_rep);
-                node_costs[k] -= weights[j];
-                //printf("updated costs\n");
-            }
-        }
-    }*/
     int node;
     for (int i = 0; i < k; i++){
         for (int j = 0; j < (n*m/100); j++){
@@ -68,9 +55,9 @@ void destroy(int *parts, int k, int *destr_mask, int n, int m, int *int_costs, i
             ind = i*n+node;
             if (parts[ind] == 1){
                 parts[ind] = 0;
-                printf("destroyed node %d from part %d\n", node, i);
+                //printf("destroyed node %d from part %d\n", node, i);
                 removeFromCost(parts, i, n, node, int_costs, ext_costs, csr_rep, csc_rep);
-                printf("updated costs\n");
+                //printf("updated costs\n");
             }
         }
     }
@@ -84,7 +71,7 @@ void repair(int *parts, int *destr_mask, int *asgn_mask, int n, int m, int *int_
         k = asgn_mask[i];
         node = destr_mask[i];
         parts[k*n+node] = 1;
-        printf("added node %d to part %d\n", node, k);
+        //printf("added node %d to part %d\n", node, k);
         addToCost(parts, k, n, node, int_costs, ext_costs, csr_rep, csc_rep);
     }
 }
@@ -103,9 +90,6 @@ void lns_serial(int *in_parts, int *weights, int parts_num, int nodes_num, int e
     int *ext_cost = (int *)malloc(parts_num*sizeof(int));
     int *temp_ext_cost = (int *)malloc(parts_num*sizeof(int));
     computeAllEdgeCost(best, row_rep, col_rep, parts_num, nodes_num, edges_num, int_cost, ext_cost);
-    for (int i = 0; i < parts_num; i++){
-        printf("init node cost %d \ninit edge cost %d\n", int_cost[i], ext_cost[i]);
-    }
     float best_cost = computeCost(int_cost, ext_cost, parts_num);
     float new_cost;
     int destr_nodes = nodes_num*m/100;
@@ -138,7 +122,7 @@ void lns_serial(int *in_parts, int *weights, int parts_num, int nodes_num, int e
 
         //printf("Accept step %d\n", iter);
         //accept step
-        if (checkMass(temp, weights, parts_num, nodes_num, max_mass)){
+        if (checkMass(int_cost, parts_num, max_mass)){
             new_cost = computeCost(temp_int_cost, temp_ext_cost, parts_num);
             if (new_cost > best_cost)
             printf("New best cost is: %f\n", new_cost);
