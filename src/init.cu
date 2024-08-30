@@ -7,7 +7,7 @@
 
 
 // Input read function
-void readInput(FILE *in_file, int *partitions, int *weights, int *parts, int nodes_num, int edges_num, int parts_num, int *mat){
+void readInput(FILE *in_file, int *partitions, int *parts, int nodes_num, int edges_num, int parts_num, int *offsets, int *indexes, int *values){
 
     // gather nodes (weigth and partition)
     int weight;
@@ -18,25 +18,38 @@ void readInput(FILE *in_file, int *partitions, int *weights, int *parts, int nod
 
     //printf("Number of nodes: %d \nNumber of edges: %d\n", nodes_num, edges_num);
     //printf("Gathering nodes...\n");
+    int a;
     for (int i = 0; i < nodes_num; i++){
         fgets(line, 100, in_file);
-        sscanf(line, "%d %d", &weights[i], &parts[i]);
+        sscanf(line, "%d %d", &a, &parts[i]);
         partitions[parts[i]*nodes_num+i] = 1;
-        printf("Assigned node %d to partition %d\n", i, parts[i]);
+        //printf("Assigned node %d to partition %d\n", i, parts[i]);
     }
 
     //checkPartsPerNode(partitions, parts_num, nodes_num);
     // gather edges
     printf("Gathering edges...\n");
+    /*
     for (int i = 0; i < nodes_num*nodes_num; i++){
         mat[i] = 0;
-    }
+    }*/
     int n1, n2;
+    int off = 0;
+    int current_node = 0;
+    offsets[0] = 0;
     for (int i = 0; i < edges_num; i++){
         fgets(line, 100, in_file);
         sscanf(line, "%d %d %d", &n1, &n2, &weight);
-        mat[n1 * nodes_num + n2] = weight;
+        if (n1 > current_node){
+            for (int j = current_node; j < n1; j++){
+                offsets[j+1] = i;
+            }
+            current_node = n1;
+        }
+        indexes[i] = n2;
+        values[i] = weight;
     }
+    offsets[nodes_num] = edges_num;
     fclose(in_file);
     printf("Input read.\n");
 }
@@ -201,6 +214,73 @@ void cscSetup(int nodes_num, int edges_num, int *mat, int *h_csc_offsets, int *h
 
 // test for correct csr build
 
+void cusparseSetup(CSR *csr, CSC *csc, int n, int e){
+    cusparseHandle_t     handle = NULL;
+    cusparseSpMatDescr_t matA;
+    cusparseSpMatDescr_t matB;
+    cusparseCreate(&handle);
+
+    int *d_csr_offsets, *d_csr_indexes, *d_csr_values,
+        *d_csc_offsets, *d_csc_indexes, *d_csc_values;
+
+    CHECK_CUDA( cudaMalloc((void**) &d_csr_offsets, (n + 1) * sizeof(int)) )
+    CHECK_CUDA( cudaMalloc((void**) &d_csr_indexes, e * sizeof(int)) )
+    CHECK_CUDA( cudaMalloc((void**) &d_csr_values, e * sizeof(int)) )
+
+    CHECK_CUDA( cudaMalloc((void**) &d_csc_offsets, (n + 1) * sizeof(int)) )
+    CHECK_CUDA( cudaMalloc((void**) &d_csc_indexes, e * sizeof(int)) )
+    CHECK_CUDA( cudaMalloc((void**) &d_csc_values, e * sizeof(int)) )
+
+    CHECK_CUDA( cudaMemcpy(d_csr_offsets, csr->offsets, (n+1)* sizeof(int), cudaMemcpyHostToDevice))
+    CHECK_CUDA( cudaMemcpy(d_csr_indexes, csr->col_indexes, e* sizeof(int), cudaMemcpyHostToDevice))
+    CHECK_CUDA( cudaMemcpy(d_csr_values, csr->values, e* sizeof(int), cudaMemcpyHostToDevice))
+    
+    CHECK_CUDA( cudaMalloc((void**) &d_csc_offsets,
+                           (n + 1) * sizeof(int)) )
+    CHECK_CUDA( cudaMalloc((void**) &d_csc_indexes,
+                           e * sizeof(int)) )
+    CHECK_CUDA( cudaMalloc((void**) &d_csc_values,
+                           e * sizeof(int)) )
+
+
+    CHECK_CUSPARSE( cusparseCreateCsr(&matA, n, n, e,
+        d_csr_offsets, d_csr_indexes, d_csr_values,
+        CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+        CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F) )
+
+    CHECK_CUSPARSE( cusparseCreateCsc(&matB, n, n, e,
+        d_csc_offsets, d_csc_indexes, d_csc_values,
+        CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+        CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F) )
+    
+    size_t bufferSize;
+    cusparseCsr2cscEx2_bufferSize( handle, n, n, e, 
+        d_csr_values, d_csr_offsets, d_csr_indexes,
+        d_csc_values, d_csc_offsets, d_csc_indexes,
+        CUDA_R_32F, CUSPARSE_ACTION_NUMERIC, 
+        CUSPARSE_INDEX_BASE_ZERO, CUSPARSE_CSR2CSC_ALG1, 
+        &bufferSize);
+
+    void* buffer;
+    CHECK_CUDA( cudaMalloc(&buffer, bufferSize) )
+
+    cusparseCsr2cscEx2(handle, n, n, e,
+        d_csr_values, d_csr_offsets, d_csr_indexes,
+        d_csc_values, d_csc_offsets, d_csc_indexes,
+        CUDA_R_32F, CUSPARSE_ACTION_NUMERIC, CUSPARSE_INDEX_BASE_ZERO, CUSPARSE_CSR2CSC_ALG_DEFAULT, buffer);
+
+    CHECK_CUDA(cudaMemcpy(csr->offsets, d_csr_offsets, (n+1)*sizeof(int), cudaMemcpyDeviceToHost))
+    CHECK_CUDA(cudaMemcpy(csr->col_indexes, d_csr_indexes, e*sizeof(int), cudaMemcpyDeviceToHost))
+    CHECK_CUDA(cudaMemcpy(csr->values, d_csr_values, e*sizeof(int), cudaMemcpyDeviceToHost))
+
+    CHECK_CUDA(cudaMemcpy(csc->offsets, d_csc_offsets, (n+1)*sizeof(int), cudaMemcpyDeviceToHost))
+    CHECK_CUDA(cudaMemcpy(csc->row_indexes, d_csc_indexes, e*sizeof(int), cudaMemcpyDeviceToHost))
+    CHECK_CUDA(cudaMemcpy(csc->values, d_csc_values, e*sizeof(int), cudaMemcpyDeviceToHost))
+
+    CHECK_CUDA( cudaFree(buffer) )
+    CHECK_CUSPARSE( cusparseDestroy(handle) )
+}
+
 void csrTest(int *offsets, int *columns, int *values, int n, int e){
     // csr test results
     int   h_csr_offsets_result[]  = { 0, 2, 5, 7, 9, 9, 9, 11, 11, 13, 14 };
@@ -211,6 +291,7 @@ void csrTest(int *offsets, int *columns, int *values, int n, int e){
 
     for (int i = 0; i < n + 1; i++) {
         if (offsets[i] != h_csr_offsets_result[i]) {
+            printf("Offset %d is %d instead of %d\n", i, offsets[i], h_csr_offsets_result[i]);
             correct = 0;break;
         }
     }

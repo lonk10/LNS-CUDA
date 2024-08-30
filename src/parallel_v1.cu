@@ -7,9 +7,9 @@
 #include "../include/init.cuh"
 #include "../include/util.cuh"
 
-#define THREADS_PER_BLOCK 256
+#define THREADS_PER_BLOCK 512
 #define GRIDS 10
-#define BLOCKS_PER_ROW 15
+#define BLOCKS_PER_ROW 512
 
 // removes the edge cost of nodes in destr_mask
 // from their corresponding partition in destr_parts
@@ -137,7 +137,7 @@ __global__ void getPartitionPerDestrNode(int *parts, int *destr_mask, int *destr
         if (parts[ind] == 1){
             //parts[ind] = 0;
             destr_parts[tid] = blockIdx.x;
-            printf("Thread %d of block %d destroyed node %d in partition %d\n", tid, blockIdx.x, node, blockIdx.x);
+            //printf("Thread %d of block %d destroyed node %d in partition %d\n", tid, blockIdx.x, node, blockIdx.x);
         }
     }
 }
@@ -175,7 +175,7 @@ __global__ void assignToParts(int n, int node, int *parts, float *result, int *i
 
     // gather values
     int edge_node;
-    __syncthreads();
+    //__syncthreads();
     if (ind < r_size){
         edge_node = csr_rep -> col_indexes[start_r + ind];
         if (parts[k*n+edge_node] == 1){
@@ -250,7 +250,7 @@ __global__ void assignToBestPart(int k, float *results, int n, int node, int *pa
     extern __shared__ int sdata[];
     if (tid < k){ // reduction for finding index of max value in results
         sdata[tid] = tid; //initialize sdata to partition ids
-        __syncthreads();
+        //__syncthreads();
         int nextTid;
         for (int stride = blockDim.x / 2; stride > 0; stride >>= 1){
             nextTid = sdata[tid + stride];
@@ -271,8 +271,8 @@ __global__ void assignToBestPart(int k, float *results, int n, int node, int *pa
             }
             atomicAdd(&int_costs[partition], 2*final_sum_i);
             atomicAdd(&ext_costs[partition], final_sum_e);
-            printf("Assigned node %d to part %d\n", node, partition);
-            printf("Adding costs %d and %d\n", final_sum_i, final_sum_e);
+            //printf("Assigned node %d to part %d\n", node, partition);
+            //printf("Adding costs %d and %d\n", final_sum_i, final_sum_e);
         }
     }
 
@@ -283,29 +283,28 @@ void repair(int *parts, int k, int *destr_mask, int n, int edges_num, int m, int
     int node;
     float *d_result;
     cudaMalloc( (void**)&d_result, k * sizeof(float));
-    float *result = (float *) malloc(k*sizeof(float));
+    //float *result = (float *) malloc(k*sizeof(float));
     int asgn;
     float temp_cost;
-    dim3 gridDim(BLOCKS_PER_ROW, k, 1);
+    dim3 gridDim(n/THREADS_PER_BLOCK + 1, k, 1);
     dim3 blockDim(THREADS_PER_BLOCK, 1, 1);
     int *block_sums_e, *block_sums_i;
     cudaMalloc( (void**)&block_sums_e, 5 * 256 * sizeof(int));
     cudaMalloc( (void**)&block_sums_i, 5 * 256 * sizeof(int));
     for (int i = 0; i < (n*m/100); i++){
-        //k = asgn_mask[i];
         node = destr_mask[i];
         assignToParts<<<gridDim, blockDim, 2 * THREADS_PER_BLOCK * sizeof(int)>>>(n, node, parts, d_result, int_costs, ext_costs, csr_rep, csc_rep, block_sums_i, block_sums_e);
         cudaDeviceSynchronize();
         //debug stuff
-        cudaMemcpy(result, d_result, k*sizeof(float), cudaMemcpyDeviceToHost);
+        /*cudaMemcpy(result, d_result, k*sizeof(float), cudaMemcpyDeviceToHost);
         for (int z = 0; z < k; z++){
             //printf("result[%d]: %f\n", z, result[z]);
         }
-        cudaDeviceSynchronize();
-        assignToBestPart<<<1, k, k*sizeof(int)>>>(k, d_result, n, node, parts, int_costs, ext_costs, block_sums_i, block_sums_e, BLOCKS_PER_ROW);
+        cudaDeviceSynchronize();*/
+        assignToBestPart<<<1, k, k*sizeof(int)>>>(k, d_result, n, node, parts, int_costs, ext_costs, block_sums_i, block_sums_e, n/THREADS_PER_BLOCK + 1);
         cudaDeviceSynchronize();
     }
-    free(result);
+    //free(result);
     cudaFree(d_result);
     cudaFree(block_sums_e);
     cudaFree(block_sums_i);
@@ -318,7 +317,7 @@ __global__ void resetMask(int *mask, int size){
     }
 }
 
-void lns_v1(int *in_parts, int *weights, int parts_num, int nodes_num, int edges_num, int max_mass, int m, CSR *row_rep, CSC *col_rep){
+void lns_v1(int *in_parts, int parts_num, int nodes_num, int edges_num, int max_mass, int m, CSR *row_rep, CSC *col_rep){
     int *best = (int *) malloc(nodes_num*parts_num*sizeof(int));
     for (int i = 0; i < nodes_num*parts_num; i++){
         best[i] = in_parts[i];
@@ -350,10 +349,11 @@ void lns_v1(int *in_parts, int *weights, int parts_num, int nodes_num, int edges
         }
         printf("\n");
     }
+    /*
     for (int i = 0; i < parts_num; i++){
         printf("init int_cost[%d] = %d\n", i, int_cost[i]);
         printf("init ext_cost[%d] = %d\n", i, ext_cost[i]);
-    }
+    }*/
 
     // copy CSR / CSC to device
     CSR *d_row_rep;
@@ -403,30 +403,37 @@ void lns_v1(int *in_parts, int *weights, int parts_num, int nodes_num, int edges
 
         cudaMemcpy(temp_int_cost, d_temp_int_cost, parts_num*sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(temp_ext_cost, d_temp_ext_cost, parts_num*sizeof(int), cudaMemcpyDeviceToHost);
-
+        
+        /*
         for (int i = 0; i < parts_num; i++){
             printf("start temp_int_cost[%d] = %d\n", i, temp_int_cost[i]);
             printf("start temp_ext_cost[%d] = %d\n", i, temp_ext_cost[i]);
-        }
+        }*/
 
         //printf("Destroy step %d\n", iter);
         //destroy step
+        printf("Random generation start\n");
         computeRandomMask(destr_mask, nodes_num, m);
+        printf("Random generation end\n");
         cudaMemcpy(d_destr_mask, destr_mask, destr_nodes*sizeof(int), cudaMemcpyHostToDevice);
+        printf("Destroy start\n");
         destroy(temp, d_destr_mask, destr_nodes, parts_num, nodes_num, d_temp_int_cost, d_temp_ext_cost, d_row_rep, d_col_rep);
-
+        printf("Destroy end\n");
         cudaMemcpy(temp_int_cost, d_temp_int_cost, parts_num*sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(temp_ext_cost, d_temp_ext_cost, parts_num*sizeof(int), cudaMemcpyDeviceToHost);
 
+        /*
         for (int i = 0; i < parts_num; i++){
-            printf("destr temp_int_cost[%d] = %d\n", i, temp_int_cost[i]);
-            printf("destr temp_ext_cost[%d] = %d\n", i, temp_ext_cost[i]);
-        }
+            //printf("destr temp_int_cost[%d] = %d\n", i, temp_int_cost[i]);
+            //printf("destr temp_ext_cost[%d] = %d\n", i, temp_ext_cost[i]);
+        }*/
 
         //printf("Repair step %d\n", iter);
         //repair step
         //computeRandomAssignment(asgn_mask, nodes_num, m, parts_num);
+        printf("Repair start\n");
         repair(temp, parts_num, destr_mask, nodes_num, edges_num, m, d_temp_int_cost, d_temp_ext_cost, d_row_rep, d_col_rep);
+        printf("Repair end\n");
 
         //printf("Accept step %d\n", iter);
         //accept step
@@ -434,20 +441,21 @@ void lns_v1(int *in_parts, int *weights, int parts_num, int nodes_num, int edges
         cudaMemcpy(temp_ext_cost, d_temp_ext_cost, parts_num*sizeof(int), cudaMemcpyDeviceToHost);
 
         for (int i = 0; i < parts_num; i++){
-            printf("temp_int_cost[%d] = %d\n", i, temp_int_cost[i]);
-            printf("temp_ext_cost[%d] = %d\n", i, temp_ext_cost[i]);
+            //printf("temp_int_cost[%d] = %d\n", i, temp_int_cost[i]);
+            //printf("temp_ext_cost[%d] = %d\n", i, temp_ext_cost[i]);
         }
 
         if (checkMass(temp_int_cost, parts_num, max_mass)){
             new_cost = computeCost(temp_int_cost, temp_ext_cost, parts_num);
-            printf("New cost found is: %f\n", new_cost);
+            //printf("New cost found is: %f\n", new_cost);
             if (new_cost > best_cost)
-            printf("New best cost is: %f\n", new_cost);
+            //printf("New best cost is: %f\n", new_cost);
                 best_cost = new_cost;
                 cudaMemcpy(best, temp, nodes_num*parts_num*sizeof(int), cudaMemcpyDeviceToHost);
         }
     }
     printf("Final cost is: %f\n", best_cost);
+    /*
     printf("Partitions were:\n");
     for (int i = 0; i < parts_num; i++){
         printf("Partition %d : ", i);
@@ -463,7 +471,7 @@ void lns_v1(int *in_parts, int *weights, int parts_num, int nodes_num, int edges
             printf("%d", best[i*nodes_num+j]);
         }
         printf("\n");
-    }
+    }*/
     
     //free
     free(best);

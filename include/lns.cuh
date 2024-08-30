@@ -9,8 +9,8 @@ typedef struct  {
     int *values;
 } CSC;
 
-#define MAX_ITER 500
-#define MAX_MASS 400
+#define MAX_ITER 10
+#define MAX_MASS 4000000
 #define DESTR_PERCENT 20
 
 #define CHECK_CUDA(func)                                                       \

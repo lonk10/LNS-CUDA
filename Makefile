@@ -13,7 +13,7 @@ CUDA_ROOT_DIR=/usr/local/cuda
 # NVCC compiler options:
 NVCC=nvcc
 CUDA_TOOLKIT := $(shell dirname $$(command -v nvcc))/..
-NVCC_FLAGS= -I$(CUDA_TOOLKIT)/include --compiler-options=-Wall --compiler-options=-Wextra --compiler-options=-Wpedantic --compiler-options=-Wconversion -g
+NVCC_FLAGS= -I$(CUDA_TOOLKIT)/include -m 64 --compiler-options=-Wall --compiler-options=-Wextra --compiler-options=-Wpedantic --compiler-options=-Wconversion -Xcompiler "-g -pg" -g -pg
 NVCC_LIBS= -lcusparse
 
 # CUDA library directory:
@@ -64,7 +64,7 @@ serial : $(OBJS) $(OBJ_DIR)/serial.o
 	$(NVCC) $(NVCC_FLAGS) $(OBJS) $(OBJ_DIR)/serial.o -o serial $(NVCC_LIBS)
 
 main: $(OBJS) $(OBJ_DIR)/main.o
-	$(NVCC) $(NVCC_FLAGS) $(OBJS) $(OBJ_DIR)/main.o -o main $(NVCC_LIBS)
+	$(NVCC) $(NVCC_FLAGS) $(OBJS) $(OBJ_DIR)/main.o -o main.exe $(NVCC_LIBS)
 
 # Compile CUDA source files to object files:
 $(OBJ_DIR)/init.o : $(SRC_DIR)/init.cu $(INC_DIR)/init.cuh $(INC_DIR)/lns.cuh 

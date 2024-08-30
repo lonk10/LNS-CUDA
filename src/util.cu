@@ -26,9 +26,10 @@ float computeCost(int *int_costs, int *ext_costs, int k){
     float u = 0;
     for (int i = 0; i < k; i++){
         u = (float) (int_costs[i]);
-        //printf("%f / (%f + %d = %f) = %f\n", u, u, ext_costs[i], (u+(float)ext_costs[i]), (u/ (u+(float)ext_costs[i])));
+        //printf("res %d:%f ", i, 100*(u/ (u+(float)ext_costs[i])));
         res += 100 * (u / (u + (float) ext_costs[i])); 
     }
+    //printf("\n");
     return res;
 }
 
@@ -104,8 +105,10 @@ void removeFromCost(int *parts, int k, int n, int node, int *int_costs, int *ext
     int res = 0;
     int start = csr_rep -> offsets[node];
     int end = csr_rep -> offsets[node+1];
+    int edge_node;
     for (int z = start; z < end; z++){
-        if (parts[k*n+z] == 0){ // only remove cost of edges going in/out of the partition
+        edge_node = csr_rep -> col_indexes[z];
+        if (parts[k*n+edge_node] == 0){ // only remove cost of edges going in/out of the partition
             ext_costs[k] -= csr_rep -> values[z];
         } else {
             int_costs[k] -= csr_rep -> values[z];
@@ -114,7 +117,8 @@ void removeFromCost(int *parts, int k, int n, int node, int *int_costs, int *ext
     start = csc_rep -> offsets[node];
     end = csc_rep -> offsets[node+1];
     for (int z = start; z < end; z++){
-        if (parts[k*n+z] == 0){ // only add cost of edges going into the partition
+        edge_node = csc_rep -> row_indexes[z];
+        if (parts[k*n+edge_node] == 0){ // only add cost of edges going into the partition
             ext_costs[k] -= csc_rep -> values[z];
         } else {
             int_costs[k] -= csc_rep -> values[z];
@@ -127,8 +131,10 @@ int addToCost(int *parts, int k, int n, int node, int *int_costs, int *ext_costs
     int res = 0;
     int start = csr_rep -> offsets[node];
     int end = csr_rep -> offsets[node+1];
+    int edge_node;
     for (int z = start; z < end; z++){
-        if (parts[k*n+z] == 0){ // only add cost of edges going out of the partition
+        edge_node = csr_rep -> col_indexes[z];
+        if (parts[k*n+edge_node] == 0){ // only add cost of edges going out of the partition
             ext_costs[k] += csr_rep -> values[z];
         } else {
             int_costs[k] += csr_rep -> values[z];
@@ -137,7 +143,8 @@ int addToCost(int *parts, int k, int n, int node, int *int_costs, int *ext_costs
     start = csc_rep -> offsets[node];
     end = csc_rep -> offsets[node+1];
     for (int z = start; z < end; z++){
-        if (parts[k*n+z] == 0){ // only add cost of edges going into the partition
+        edge_node = csc_rep -> row_indexes[z];
+        if (parts[k*n+edge_node] == 0){ // only add cost of edges going into the partition
             ext_costs[k] += csc_rep -> values[z];
         } else {
             int_costs[k] += csc_rep -> values[z];
