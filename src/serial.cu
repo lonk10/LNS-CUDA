@@ -71,6 +71,7 @@ void repair(int *parts, int *destr_mask, int n, int m, int parts_num, int *int_c
     float best_cost, temp_cost;
     int *temp_int_cost = (int *)malloc(parts_num*sizeof(int));
     int *temp_ext_cost = (int *)malloc(parts_num*sizeof(int));
+    int old_cost = computeCost(int_costs, ext_costs, parts_num);
     
     for (int i = 0; i < (n*m/100); i++){
         node = destr_mask[i];
@@ -80,7 +81,7 @@ void repair(int *parts, int *destr_mask, int n, int m, int parts_num, int *int_c
             memcpy(temp_int_cost, int_costs, parts_num*sizeof(int));
             memcpy(temp_ext_cost, ext_costs, parts_num*sizeof(int));
             addToCost(parts, j, n, node, temp_int_cost, temp_ext_cost, csr_rep, csc_rep);
-            temp_cost = computeCost(temp_int_cost, temp_ext_cost, parts_num);
+            temp_cost = computeCost(temp_int_cost, temp_ext_cost, parts_num) - old_cost;
             //printf("old cost: %f new cost: %f\n", best_cost, temp_cost);
             if (temp_cost > best_cost){
                 best_cost = temp_cost;
@@ -149,6 +150,7 @@ void lns_serial(int *in_parts, int parts_num, int nodes_num, int edges_num, int 
         //checkPartsPerNode(temp, parts_num, nodes_num);
     }
     printf("Final cost is: %f\n", best_cost);
+    /*
     printf("Partitions were:\n");
     for (int i = 0; i < parts_num; i++){
         printf("Partition %d : ", i);
@@ -164,7 +166,7 @@ void lns_serial(int *in_parts, int parts_num, int nodes_num, int edges_num, int 
             printf("%d", best[i*nodes_num+j]);
         }
         printf("\n");
-    }
+    }*/
     //printf("snip:\n");
     free(destr_mask);
     //printf("snapp:\n");

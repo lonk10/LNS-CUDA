@@ -64,7 +64,7 @@ serial : $(OBJS) $(OBJ_DIR)/serial.o
 	$(NVCC) $(NVCC_FLAGS) $(OBJS) $(OBJ_DIR)/serial.o -o serial $(NVCC_LIBS)
 
 main: $(OBJS) $(OBJ_DIR)/main.o
-	$(NVCC) $(NVCC_FLAGS) $(OBJS) $(OBJ_DIR)/main.o -o main.exe $(NVCC_LIBS)
+	$(NVCC) $(NVCC_FLAGS) $(OBJS) $(OBJ_DIR)/main.o -o main $(NVCC_LIBS)
 
 # Compile CUDA source files to object files:
 $(OBJ_DIR)/init.o : $(SRC_DIR)/init.cu $(INC_DIR)/init.cuh $(INC_DIR)/lns.cuh 

@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "../include/lns.cuh"
+#include <stdlib.h>
 
 
 int computeMass(int ind, int *parts, int nodes_num, int *weights){
@@ -78,26 +79,73 @@ void computeAllEdgeCost(int *parts, CSR *row_rep, CSC *col_rep, int parts_num, i
     }
 }
 
+void newComputeAllEdgeCost(int* parts, CSR* row_rep, CSC* col_rep, int parts_num, int nodes_num, int edges_num, int* int_costs, int* ext_costs) {
+    for (int i = 0; i < parts_num; i++) {
+        int_costs[i] = 0;
+        ext_costs[i] = 0;
+    }
+    int start, end;
+    int int_res = 0;
+    int ext_res = 0;
+    int partition;
+    int node;
+    for (int i = 0; i < nodes_num; i++) {
+        int_res = 0;
+        ext_res = 0;
+        partition = parts[i];
+        start = row_rep->offsets[i];
+        end = row_rep->offsets[i + 1];
+        for (int j = start; j < end; j++) {
+            node = row_rep->col_indexes[j];
+            if (parts[node] == parts[i]) {
+                int_res += row_rep->values[j];
+            }
+            else {
+                ext_res += row_rep->values[j];
+            }
+        }
+
+        start = col_rep->offsets[i];
+        end = col_rep->offsets[i + 1];
+        for (int j = start; j < end; j++) {
+            node = col_rep->row_indexes[j];
+            if (parts[node] == parts[i]) {
+                int_res += col_rep->values[j];
+            }
+            else {
+                ext_res += col_rep->values[j];
+            }
+        }
+        int_costs[partition] += int_res;
+        ext_costs[partition] += ext_res;
+    }
+}
+
 // Random functions
 
 
-void computeRandomMask(int * mask, int n, int m){
+void computeRandomMask(int* mask, int n, int m) {
     int i = 0;
-    int max = n*m/100;
-    int *check = (int*) malloc(n*sizeof(int));
+    int max = n * m / 100;
+    //int *check = (int*) malloc(n*sizeof(int));
     int rand_node;
-    for (int j = 0; j < n; j++){
-        check[j] = 0;
+    unsigned char *is_used = (unsigned char *) malloc(n*sizeof(unsigned char)); /* flags */
+    for (int z = 0; z < n; z++) {
+        is_used[z] = 0;
     }
-    while (i < max){
-        rand_node = rand() % n;
-        if (check[rand_node] == 0){
-            mask[i] = rand_node;
-            check[rand_node] = 1;
-            i++;
-        }
+
+    int j = 0;
+    int rn, rm;
+    for (int i = n - max; i < n && j < max; i++){
+        rand_node = rand() % (i+1);
+        if (is_used[rand_node]) rand_node = i;
+        mask[j++] = rand_node;
+        //printf("generated %d\n", rand_node);
+        is_used[rand_node] = 1;
+        //printf("%d out of %d\n", i, max);
     }
-    free(check);
+    //printf("finished generation\n");
+    free(is_used);
 }
 
 // Removes costs tied to node n in partition k

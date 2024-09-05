@@ -75,12 +75,14 @@ int main(int argc, char* argv[]){
     printf("###################################\n");
     printf("#### STARTING SERIAL EXECUTION ####\n");
     printf("###################################\n");
+
     lns_serial(partitions, parts_num, nodes_num, edges_num, MAX_MASS, DESTR_PERCENT, row_rep, col_rep);
 
     printf("########################################\n");
     printf("#### STARTING PARALLEL_V1 EXECUTION ####\n");
     printf("########################################\n");
-    lns_v1(partitions, parts_num, nodes_num, edges_num, MAX_MASS, DESTR_PERCENT, row_rep, col_rep);
+
+    lns_v1(parts, parts_num, nodes_num, edges_num, MAX_MASS, DESTR_PERCENT, row_rep, col_rep);
     
     free(partitions);
     //free(weights);

@@ -11,7 +11,7 @@ typedef struct  {
 
 #define MAX_ITER 10
 #define MAX_MASS 4000000
-#define DESTR_PERCENT 20
+#define DESTR_PERCENT 10
 
 #define CHECK_CUDA(func)                                                       \
 {                                                                              \

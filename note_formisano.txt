@@ -83,3 +83,7 @@ usare bitmap o l'int per più nodi
 currently destroy update all costs in parallel,
 this means that some edges might be remove multiple times
 either stay like this, or serialize, choose
+
+serial vs parallel
+hongkong: 2 ms vs 490ms
+guangzhou: 15ms vs 60ms
