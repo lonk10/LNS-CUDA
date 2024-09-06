@@ -19,19 +19,20 @@ __device__ static void HandleError(cudaError_t err, const char* file, int line) 
 }
 #define HANDLE_ERROR( err ) (HandleError( err, __FILE__, __LINE__ ))
 
-__device__ void warpReduce(volatile int* sdata, int tid, int blockdim) {
+__device__ void warpReduce(volatile int* sdata, int tid) {
     sdata[tid] += sdata[tid + 32];
     sdata[tid] += sdata[tid + 16];
     sdata[tid] += sdata[tid + 8];
     sdata[tid] += sdata[tid + 4];
     sdata[tid] += sdata[tid + 2];
     sdata[tid] += sdata[tid + 1];
-    sdata[tid + blockdim] += sdata[tid + blockdim + 32];
-    sdata[tid + blockdim] += sdata[tid + blockdim + 16];
-    sdata[tid + blockdim] += sdata[tid + blockdim + 8];
-    sdata[tid + blockdim] += sdata[tid + blockdim + 4];
-    sdata[tid + blockdim] += sdata[tid + blockdim + 2];
-    sdata[tid + blockdim] += sdata[tid + blockdim + 1];
+}
+
+__inline__ __device__ int warpReduceSum(int val) {
+    for (int offset = warpSize / 2; offset > 0; offset /= 2) {
+        val += __shfl_down_sync(warpSize - 1, val, offset);
+    }
+    return val;
 }
 
 // removes the edge cost of nodes in destr_mask
@@ -89,7 +90,10 @@ __global__ void removeNodes(int* parts, int* destr_mask, int n, int* int_costs, 
             }
             __syncthreads();
         }
-        if (threadIdx.x < 32) warpReduce(sdata, threadIdx.x, blockDim.x);
+        if (threadIdx.x < 32) {
+            warpReduce(sdata, threadIdx.x);
+            warpReduce(sdata, threadIdx.x + blockDim.x);
+        }
 
         // store block reduction result
         // this is needed because a single can have max 1024 threads
@@ -181,6 +185,7 @@ __global__ void assignToParts(int n, int* nodes, int* parts, int* int_costs, int
     int edge_node;
     int s_ind;
     __syncthreads();
+    
     if (ind < r_size) {
         edge_node = csr_rep->col_indexes[start_r + ind];
         s_ind = (parts[edge_node] != k) * blockDim.x;
@@ -199,7 +204,10 @@ __global__ void assignToParts(int n, int* nodes, int* parts, int* int_costs, int
             sdata[threadIdx.x + blockDim.x] += sdata[threadIdx.x + blockDim.x + stride];
         }
         __syncthreads();
-    } if (threadIdx.x < 32) warpReduce(sdata, threadIdx.x, blockDim.x);
+    } if (threadIdx.x < 32) {
+        warpReduce(sdata, threadIdx.x);
+        warpReduce(sdata, threadIdx.x + blockDim.x);
+    }
 
     if (ind == 0) {
         atomicAdd(&block_sums_i[blockIdx.z * gridDim.y * gridDim.x + k * gridDim.x + block_id], sdata[0]);
@@ -221,6 +229,57 @@ __global__ void assignToParts(int n, int* nodes, int* parts, int* int_costs, int
         float new_cost = computePartCost(mu_k, ext_costs[k] + final_sum_e);
         result[blockIdx.z * gridDim.y + k] = new_cost - old_cost;
     }*/
+}
+
+__global__ void assignToParts2(int n, int* nodes, int* parts, int* int_costs, int* ext_costs, // util params
+                               int *r_offset, int *r_indexes, int *r_values, int* c_offset, int* c_indexes, int* c_values, // graph
+                               int *out_i, int *out_e) { // results
+    int sum_i = 0;
+    int sum_e = 0;
+    extern __shared__ int sdata[];
+
+    int partition = blockIdx.y;
+    int res_ind = blockIdx.z * gridDim.y + blockIdx.y;
+    int ind = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (threadIdx.x == 0) {
+        int node = nodes[blockIdx.z];
+        sdata[0] = r_offset[node];
+        sdata[1] = c_offset[node];
+        sdata[2] = r_offset[node + 1] - sdata[0];
+        sdata[3] = c_offset[node + 1] - sdata[1];
+    }
+    int start_r = sdata[0];
+    int start_c = sdata[1];
+    int r_size = sdata[2];
+    int c_size = sdata[3];
+    __syncthreads();
+
+    int edge_node;
+    for (int i = ind; i < r_size; i += blockDim.x * gridDim.x) {
+        edge_node = r_indexes[start_r + i];
+        if (parts[edge_node] == partition) {
+            sum_i += r_values[start_r + i];
+        }
+        else {
+            sum_e += r_values[start_r + i];
+        }
+    }
+    for (int i = ind; i < c_size; i += blockDim.x * gridDim.x) {
+        edge_node = c_indexes[start_r + i];
+        if (parts[edge_node] == partition) {
+            sum_i += c_values[start_c + i];
+        }
+        else {
+            sum_e += c_values[start_c + i];
+        }
+    }
+    sum_i = warpReduceSum(sum_i);
+    sum_e = warpReduceSum(sum_e);
+    if ((threadIdx.x & (warpSize - 1)) == 0) {
+        atomicAdd(out_i+res_ind, sum_i);
+        atomicAdd(out_e+res_ind, sum_e);
+    }
 }
 
 __global__ void setToZero(int* arr, int n) {
@@ -256,7 +315,7 @@ void destroy(int* parts, int* destr_mask, int destr_nodes, int k, int n, int* in
 // kernel is too small, only k threads and 1 block
 // either find a fix or serialize this
 // threads are 95+% instruction inactive
-__global__ void assignToBestPart(int k, float* results, int n, int* nodes, int* parts, int* int_costs, int* ext_costs, int* block_sums_i, int* block_sums_e, int blocks) {
+__global__ void assignToBestPart(int k, float* results, int n, int* nodes, int* parts, int* int_costs, int* ext_costs, int* out_i, int* out_e) {
     int tid = threadIdx.x;
     extern __shared__ int sdata[];
     if (tid < k) { // reduction for finding index of max value in results
@@ -277,32 +336,26 @@ __global__ void assignToBestPart(int k, float* results, int n, int* nodes, int* 
     if (tid == 0) {
         int partition = sdata[0];
         parts[nodes[blockIdx.x]] = partition; // assign node to index sdata[0]
+        /*
         int final_sum_i = 0;
         int final_sum_e = 0;
         //printf("blockid %d gridim %d blocks %d\n", blockIdx.x, gridDim.x, blocks);
         for (int i = 0; i < blocks; i++) {
             final_sum_i += block_sums_i[blockIdx.x * k * blocks + partition * blocks + i];
             final_sum_e += block_sums_e[blockIdx.x * k * blocks + partition * blocks + i];
-        }
-        atomicAdd(&int_costs[partition], 2 * final_sum_i);
-        atomicAdd(&ext_costs[partition], final_sum_e);
+        }*/
+        atomicAdd(&int_costs[partition], 2 * out_i[blockIdx.x*k + partition]);
+        atomicAdd(&ext_costs[partition], out_e[blockIdx.x * k + partition]);
     }
 
 }
 
-__global__ void gatherBlockResults(int* block_sums_i, int* block_sums_e, int* result) {
-    extern __shared__ int sdata[];
+__global__ void gatherResults(int* out_i, int* out_e, int k, int *i_costs, int *e_costs, float* result) {
     int ind = blockIdx.x * blockDim.x + threadIdx.x;
-
-    sdata[threadIdx.x] = block_sums_i[ind];
-
-    for (int stride = blockDim.x / 2; stride > 32; stride >>= 1) {
-        if (threadIdx.x < stride && (threadIdx.x + stride) < 41) {
-            sdata[threadIdx.x] += sdata[threadIdx.x + stride];
-            sdata[threadIdx.x + blockDim.x] += sdata[threadIdx.x + blockDim.x + stride];
-        }
-        __syncthreads();
-    } if (threadIdx.x < 32) warpReduce(sdata, threadIdx.x, blockDim.x);
+    
+    for (int i = 0; i < k; i++) {
+        result[ind * k + i] = computePartCost(2*out_i[ind * k + i]+ i_costs[i], out_e[ind*k+i]+ e_costs[i]) - computePartCost(i_costs[i], e_costs[i]);
+    }
 
 }
 
@@ -327,13 +380,47 @@ void repair(int* parts, int k, int* destr_mask, int n, int destr_nodes, int m, i
         //node = destr_mask[i];
     assignToParts << <grid_dim, block_dim, 2 * THREADS_PER_BLOCK * sizeof(int) >> > (n, destr_mask, parts, int_costs, ext_costs, csr_rep, csc_rep, block_sums_i, block_sums_e);
     cudaDeviceSynchronize();
-    assignToBestPart << <destr_nodes, k, 2 * k * sizeof(int) >> > (k, d_result, n, destr_mask, parts, int_costs, ext_costs, block_sums_i, block_sums_e, blocks);
+    //assignToBestPart << <destr_nodes, k, 2 * k * sizeof(int) >> > (k, d_result, n, destr_mask, parts, int_costs, ext_costs, block_sums_i, block_sums_e, blocks);
     cudaDeviceSynchronize();
     //}
     free(result);
     cudaFree(d_result);
     cudaFree(block_sums_e);
     cudaFree(block_sums_i);
+}
+
+void repair2(int* parts, int k, int* destr_mask, int n, int destr_nodes, int m, int* int_costs, int* ext_costs, 
+             int* r_offset, int* r_indexes, int* r_values, int* c_offset, int* c_indexes, int* c_values) {
+    //int i = 0;
+    int node;
+    float* d_result;
+    cudaMalloc((void**)&d_result, k * destr_nodes * sizeof(float));
+    float* result = (float*)malloc(k * destr_nodes * sizeof(float));
+    int blocks = n / THREADS_PER_BLOCK + 1; // blocks/4 todo
+    dim3 grid_dim(blocks, k, destr_nodes); // n/64 * k * m
+    dim3 block_dim(THREADS_PER_BLOCK, 1, 1);
+    int* out_e, * out_i;
+    //printf("destr_nodes %d\n", destr_nodes);
+    cudaMalloc((void**)&out_e, k * destr_nodes * sizeof(int));
+    cudaMalloc((void**)&out_i, k * destr_nodes * sizeof(int));
+    // loop is necessary because otherwise
+    // nodes are added with incomplete information
+    //for (int i = 0; i < (n * m / 100); i++) {
+        //node = destr_mask[i];
+    assignToParts2 << <grid_dim, block_dim, 4 * sizeof(int) >> > (n, destr_mask, parts, int_costs, ext_costs, 
+                                                                                      r_offset, r_indexes, r_values,
+                                                                                      c_offset, c_indexes, c_values,
+                                                                                      out_i, out_e);
+    cudaDeviceSynchronize();
+    gatherResults << <destr_nodes/1024 + 1, 1024 >> > (out_i, out_e, k, int_costs, ext_costs, d_result);
+    cudaDeviceSynchronize();
+    assignToBestPart << <destr_nodes, k, 2 * k * sizeof(int) >> > (k, d_result, n, destr_mask, parts, int_costs, ext_costs, out_i, out_e);
+    cudaDeviceSynchronize();
+    //}
+    free(result);
+    cudaFree(d_result);
+    cudaFree(out_e);
+    cudaFree(out_i);
 }
 
 __global__ void resetMask(int* mask, int size) {
@@ -431,7 +518,10 @@ void lns_v1(int* in_parts, int parts_num, int nodes_num, int edges_num, int max_
 
         //repair step
         //printf("Repair start\n");
-        repair(temp, parts_num, d_destr_mask, nodes_num, destr_nodes, m, d_temp_int_cost, d_temp_ext_cost, d_row_rep, d_col_rep);
+        //repair(temp, parts_num, d_destr_mask, nodes_num, destr_nodes, m, d_temp_int_cost, d_temp_ext_cost, d_row_rep, d_col_rep);
+        repair2(temp, parts_num, d_destr_mask, nodes_num, destr_nodes, m, d_temp_int_cost, d_temp_ext_cost, 
+                row_offsets, row_indexes, row_values,
+                col_offsets, col_indexes, col_values);
         //printf("Repair end\n");
 
         //accept step
