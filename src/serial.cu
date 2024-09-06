@@ -71,12 +71,12 @@ void repair(int *parts, int *destr_mask, int n, int m, int parts_num, int *int_c
     float best_cost, temp_cost;
     int *temp_int_cost = (int *)malloc(parts_num*sizeof(int));
     int *temp_ext_cost = (int *)malloc(parts_num*sizeof(int));
-    int old_cost = computeCost(int_costs, ext_costs, parts_num);
+    float old_cost = computeCost(int_costs, ext_costs, parts_num);
     
     for (int i = 0; i < (n*m/100); i++){
         node = destr_mask[i];
         best_cost = 0;
-        best_k = -1;
+        best_k = 0;
         for (int j = 0; j < parts_num; j++){
             memcpy(temp_int_cost, int_costs, parts_num*sizeof(int));
             memcpy(temp_ext_cost, ext_costs, parts_num*sizeof(int));
