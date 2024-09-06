@@ -30,7 +30,7 @@ __device__ void warpReduce(volatile int* sdata, int tid) {
 
 __inline__ __device__ int warpReduceSum(int val) {
     for (int offset = warpSize / 2; offset > 0; offset /= 2) {
-        val += __shfl_down_sync(warpSize - 1, val, offset);
+        val += __shfl_down_sync(0xffffffff, val, offset);
     }
     return val;
 }
@@ -249,14 +249,14 @@ __global__ void assignToParts2(int n, int* nodes, int* parts, int* int_costs, in
         sdata[2] = r_offset[node + 1] - sdata[0];
         sdata[3] = c_offset[node + 1] - sdata[1];
     }
+    __syncthreads();
     int start_r = sdata[0];
     int start_c = sdata[1];
     int r_size = sdata[2];
     int c_size = sdata[3];
-    __syncthreads();
-
     int edge_node;
     for (int i = ind; i < r_size; i += blockDim.x * gridDim.x) {
+        //printf("thread %d block (%d,%d,%d) start_r %d i %d\n", threadIdx.x, blockIdx.x, blockIdx.y, blockIdx.z, start_r, i);
         edge_node = r_indexes[start_r + i];
         if (parts[edge_node] == partition) {
             sum_i += r_values[start_r + i];
@@ -266,7 +266,7 @@ __global__ void assignToParts2(int n, int* nodes, int* parts, int* int_costs, in
         }
     }
     for (int i = ind; i < c_size; i += blockDim.x * gridDim.x) {
-        edge_node = c_indexes[start_r + i];
+        edge_node = c_indexes[start_c + i];
         if (parts[edge_node] == partition) {
             sum_i += c_values[start_c + i];
         }
@@ -274,11 +274,12 @@ __global__ void assignToParts2(int n, int* nodes, int* parts, int* int_costs, in
             sum_e += c_values[start_c + i];
         }
     }
+
     sum_i = warpReduceSum(sum_i);
     sum_e = warpReduceSum(sum_e);
-    if ((threadIdx.x & (warpSize - 1)) == 0) {
-        atomicAdd(out_i+res_ind, sum_i);
-        atomicAdd(out_e+res_ind, sum_e);
+    if ((threadIdx.x & 0x1f) == 0) {
+        atomicAdd(&out_i[res_ind], sum_i);
+        atomicAdd(&out_e[res_ind], sum_e);
     }
 }
 
@@ -350,11 +351,12 @@ __global__ void assignToBestPart(int k, float* results, int n, int* nodes, int* 
 
 }
 
-__global__ void gatherResults(int* out_i, int* out_e, int k, int *i_costs, int *e_costs, float* result) {
+__global__ void gatherResults(int* out_i, int* out_e, int k, int* i_costs, int* e_costs, float* result, int n) {
     int ind = blockIdx.x * blockDim.x + threadIdx.x;
-    
-    for (int i = 0; i < k; i++) {
-        result[ind * k + i] = computePartCost(2*out_i[ind * k + i]+ i_costs[i], out_e[ind*k+i]+ e_costs[i]) - computePartCost(i_costs[i], e_costs[i]);
+    if (ind < n) {
+        for (int i = 0; i < k; i++) {
+            result[ind * k + i] = computePartCost(2 * out_i[ind * k + i] + i_costs[i], out_e[ind * k + i] + e_costs[i]) - computePartCost(i_costs[i], e_costs[i]);
+        }
     }
 
 }
@@ -394,25 +396,30 @@ void repair2(int* parts, int k, int* destr_mask, int n, int destr_nodes, int m, 
     //int i = 0;
     int node;
     float* d_result;
-    cudaMalloc((void**)&d_result, k * destr_nodes * sizeof(float));
-    float* result = (float*)malloc(k * destr_nodes * sizeof(float));
+    int arr_size = k * destr_nodes;
+
+    cudaMalloc((void**)&d_result, arr_size * sizeof(float));
+    float* result = (float*)malloc(arr_size * sizeof(float));
     int blocks = n / THREADS_PER_BLOCK + 1; // blocks/4 todo
-    dim3 grid_dim(blocks, k, destr_nodes); // n/64 * k * m
+    dim3 grid_dim(blocks/4, k, destr_nodes); // n/64 * k * m
     dim3 block_dim(THREADS_PER_BLOCK, 1, 1);
     int* out_e, * out_i;
     //printf("destr_nodes %d\n", destr_nodes);
-    cudaMalloc((void**)&out_e, k * destr_nodes * sizeof(int));
-    cudaMalloc((void**)&out_i, k * destr_nodes * sizeof(int));
+    cudaMalloc((void**)&out_e, arr_size * sizeof(int));
+    cudaMalloc((void**)&out_i, arr_size * sizeof(int));
     // loop is necessary because otherwise
     // nodes are added with incomplete information
     //for (int i = 0; i < (n * m / 100); i++) {
         //node = destr_mask[i];
+    setToZero<<<arr_size/1024 + 1, 1024>>>(out_e, arr_size);
+    setToZero<<<arr_size/1024 + 1, 1024>>>(out_i, arr_size);
+    cudaDeviceSynchronize();
     assignToParts2 << <grid_dim, block_dim, 4 * sizeof(int) >> > (n, destr_mask, parts, int_costs, ext_costs, 
                                                                                       r_offset, r_indexes, r_values,
                                                                                       c_offset, c_indexes, c_values,
                                                                                       out_i, out_e);
     cudaDeviceSynchronize();
-    gatherResults << <destr_nodes/1024 + 1, 1024 >> > (out_i, out_e, k, int_costs, ext_costs, d_result);
+    gatherResults << <destr_nodes/1024 + 1, 1024 >> > (out_i, out_e, k, int_costs, ext_costs, d_result, destr_nodes);
     cudaDeviceSynchronize();
     assignToBestPart << <destr_nodes, k, 2 * k * sizeof(int) >> > (k, d_result, n, destr_mask, parts, int_costs, ext_costs, out_i, out_e);
     cudaDeviceSynchronize();
