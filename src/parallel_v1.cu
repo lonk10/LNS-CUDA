@@ -130,48 +130,46 @@ __global__ void removeNodes2(int* parts, int* nodes, int n, int* int_costs, int*
                              int* r_offset, int* r_indexes, int* r_values, int* c_offset, int* c_indexes, int* c_values,
                              int* block_sums_i, int* block_sums_e, int* removed_nodes) {
     
-    int block_id = blockIdx.x;
     int ind = blockIdx.x * blockDim.x + threadIdx.x;
     extern __shared__ int sdata[];
 
     int node = nodes[blockIdx.y];
     int k = parts[node];
     int start_r = r_offset[node];
-    int end_r = r_offset[node + 1];
     int start_c = c_offset[node];
-    int end_c = c_offset[node + 1];
 
-    int r_size = end_r - start_r;
-    int c_size = end_c - start_c;
-    int max_size = r_size > c_size ? r_size : c_size;
-
+    int r_size = r_offset[node + 1] - start_r;
+    int c_size = c_offset[node + 1] - start_c;
     // init of block sums
     // block_sums[k*gridDim.x...k*gridDim+block_id] is the reduction result of block block_id in row k
     // sdata init
-    if (threadIdx.x < max_size) {
-        sdata[threadIdx.x] = 0;
-        sdata[threadIdx.x + blockDim.x] = 0;
-    }
+    sdata[threadIdx.x] = 0;
+    sdata[threadIdx.x + blockDim.x] = 0;
 
     // gather values
     int edge_node;
     int s_ind;
+    if (ind == 0) {
+        removed_nodes[node] = 1;
+    }
     __syncthreads();
 
     if (ind < r_size) {
         edge_node = r_indexes[start_r + ind];
         s_ind = (parts[edge_node] != k) * blockDim.x;
+        //printf("node %d edge_node %d s_ind %d\n", node, edge_node, s_ind);
         sdata[threadIdx.x + s_ind] = r_values[start_r + ind];
 
     }
     else if (ind < r_size + c_size) {
-        edge_node = c_indexes[start_c + ind];
+        edge_node = c_indexes[start_c + ind - r_size];
         s_ind = (parts[edge_node] != k) * blockDim.x; //used to know if value is be stored as ext or int
-        sdata[threadIdx.x + s_ind] = c_values[start_c + ind];
+        //printf("node %d edge_node %d s_ind %d\n", node, edge_node, s_ind);
+        sdata[threadIdx.x + s_ind] = c_values[start_c + ind - r_size];
     }
     // reduction
     for (int stride = blockDim.x / 2; stride > 32; stride >>= 1) {
-        if (threadIdx.x < stride && (threadIdx.x + stride) < max_size) {
+        if (threadIdx.x < stride && (threadIdx.x + stride) < r_size + c_size) {
             sdata[threadIdx.x] += sdata[threadIdx.x + stride];
             sdata[threadIdx.x + blockDim.x] += sdata[threadIdx.x + blockDim.x + stride];
         }
@@ -182,19 +180,20 @@ __global__ void removeNodes2(int* parts, int* nodes, int n, int* int_costs, int*
     }
 
     if (threadIdx.x == 0) {
-        block_sums_i[blockIdx.z * gridDim.x + block_id] = sdata[0];
-        block_sums_e[blockIdx.z * gridDim.x + block_id] = sdata[blockDim.x];
+        //printf("gathered %d and %d\n", sdata[0], sdata[blockDim.x]);
+        block_sums_i[blockIdx.z * gridDim.x + blockIdx.x] = sdata[0];
+        block_sums_e[blockIdx.z * gridDim.x + blockIdx.x] = sdata[blockDim.x];
     }
 }
 
 __global__ void updatePartWeights(int* nodes, int* parts, int* out_i, int* out_e, int* costs_i, int* costs_e) {
-    __extern__ shared int sdata[];
+    extern __shared__ int sdata[];
 
     sdata[threadIdx.x] = out_i[blockIdx.x * blockDim.x + threadIdx.x];
     sdata[threadIdx.x + blockDim.x] = out_e[blockIdx.x * blockDim.x + threadIdx.x];
     __syncthreads();
     for (int stride = blockDim.x / 2; stride > 32; stride >>= 1) {
-        if (threadIdx.x < stride && (threadIdx.x + stride) < max_size) {
+        if (threadIdx.x < stride && (threadIdx.x + stride) < blockDim.x) {
             sdata[threadIdx.x] += sdata[threadIdx.x + stride];
             sdata[threadIdx.x + blockDim.x] += sdata[threadIdx.x + blockDim.x + stride];
         }
@@ -206,8 +205,10 @@ __global__ void updatePartWeights(int* nodes, int* parts, int* out_i, int* out_e
     __syncthreads();
     if (threadIdx.x == 0) {
         int partition = parts[nodes[blockIdx.x]];
-        atomicSub(&cost_i[partition], sdata[0]);
-        atomicSub(&cost_e[partition], sdata[blockDim.x]);
+        //printf("removing node %d from parts %d, with weights %d and %d\n", nodes[blockIdx.x], partition, sdata[0], sdata[blockDim.x]);
+        parts[nodes[blockIdx.x]] = -1;
+        atomicSub(&costs_i[partition], sdata[0]);
+        atomicSub(&costs_e[partition], sdata[blockDim.x]);
     }
 }
 // Given k partitions and n*m/100 threads per block
@@ -419,7 +420,7 @@ void destroy2(int* parts, int* destr_mask, int destr_nodes, int k, int n, int* i
                                                                                     c_offset, c_indexes, c_values,
                                                                                     block_sums_i, block_sums_e, removed_nodes);
     cudaDeviceSynchronize();
-    updatePartWeights << <destr_nodes, BLOCKS_PER_ROW >> > (nodes, parts, block_sums_i, block_sums_e, int_costs, ext_costs);
+    updatePartWeights << <destr_nodes, BLOCKS_PER_ROW, 2 * BLOCKS_PER_ROW * sizeof(int)>> > (destr_mask, parts, block_sums_i, block_sums_e, int_costs, ext_costs);
     cudaDeviceSynchronize(); // probably not needed
     cudaFree(block_sums_i);
     cudaFree(block_sums_e);
@@ -630,20 +631,22 @@ void lns_v1(int* in_parts, int parts_num, int nodes_num, int edges_num, int max_
         //printf("Random generation end\n");
         cudaMemcpy(d_destr_mask, destr_mask, destr_nodes * sizeof(int), cudaMemcpyHostToDevice);
         //printf("Destroy start\n");
-
-        destroy(temp, d_destr_mask, destr_nodes, parts_num, nodes_num, d_temp_int_cost, d_temp_ext_cost, d_row_rep, d_col_rep);
-
+        
+        destroy2(temp, d_destr_mask, destr_nodes, parts_num, nodes_num, d_temp_int_cost, d_temp_ext_cost, 
+                 row_offsets, col_indexes, row_values,
+                 col_offsets, row_indexes, col_values);
         //printf("Destroy end\n");
         cudaMemcpy(temp_int_cost, d_temp_int_cost, parts_num * sizeof(int), cudaMemcpyDeviceToHost);
         cudaMemcpy(temp_ext_cost, d_temp_ext_cost, parts_num * sizeof(int), cudaMemcpyDeviceToHost);
+        printf("Cost after destroy %f \n", computeCost(temp_int_cost, temp_ext_cost, parts_num));
 
 
         //repair step
         //printf("Repair start\n");
         //repair(temp, parts_num, d_destr_mask, nodes_num, destr_nodes, m, d_temp_int_cost, d_temp_ext_cost, d_row_rep, d_col_rep);
         repair2(temp, parts_num, d_destr_mask, nodes_num, destr_nodes, m, d_temp_int_cost, d_temp_ext_cost, 
-                row_offsets, row_indexes, row_values,
-                col_offsets, col_indexes, col_values);
+                row_offsets, col_indexes, row_values,
+                col_offsets, row_indexes, col_values);
         //printf("Repair end\n");
 
         //accept step
