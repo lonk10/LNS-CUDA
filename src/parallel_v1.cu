@@ -100,7 +100,7 @@ __global__ void removeNodes(int* parts, int* destr_mask, int n, int* int_costs, 
         // so if a node is connected to more than 1024 other nodes, multiple blocks are needed to handle it
         // as shared memory is only intra-block, global memory is needed
 
-        if (ind == 0) {
+        if (threadIdx.x == 0) {
             atomicAdd(&block_sums_i[blockIdx.y * gridDim.x + blockIdx.x], sdata[0]);
             atomicAdd(&block_sums_e[blockIdx.y * gridDim.x + blockIdx.x], sdata[blockDim.x]);
         }
@@ -123,6 +123,91 @@ __global__ void removeNodes(int* parts, int* destr_mask, int n, int* int_costs, 
             atomicSub(&int_costs[partition], final_sum_i);
             atomicSub(&ext_costs[partition], final_sum_e);
         }
+    }
+}
+
+__global__ void removeNodes2(int* parts, int* nodes, int n, int* int_costs, int* ext_costs, 
+                             int* r_offset, int* r_indexes, int* r_values, int* c_offset, int* c_indexes, int* c_values,
+                             int* block_sums_i, int* block_sums_e, int* removed_nodes) {
+    
+    int block_id = blockIdx.x;
+    int ind = blockIdx.x * blockDim.x + threadIdx.x;
+    extern __shared__ int sdata[];
+
+    int node = nodes[blockIdx.y];
+    int k = parts[node];
+    int start_r = r_offset[node];
+    int end_r = r_offset[node + 1];
+    int start_c = c_offset[node];
+    int end_c = c_offset[node + 1];
+
+    int r_size = end_r - start_r;
+    int c_size = end_c - start_c;
+    int max_size = r_size > c_size ? r_size : c_size;
+
+    // init of block sums
+    // block_sums[k*gridDim.x...k*gridDim+block_id] is the reduction result of block block_id in row k
+    // sdata init
+    if (threadIdx.x < max_size) {
+        sdata[threadIdx.x] = 0;
+        sdata[threadIdx.x + blockDim.x] = 0;
+    }
+
+    // gather values
+    int edge_node;
+    int s_ind;
+    __syncthreads();
+
+    if (ind < r_size) {
+        edge_node = r_indexes[start_r + ind];
+        s_ind = (parts[edge_node] != k) * blockDim.x;
+        sdata[threadIdx.x + s_ind] = r_values[start_r + ind];
+
+    }
+    else if (ind < r_size + c_size) {
+        edge_node = c_indexes[start_c + ind];
+        s_ind = (parts[edge_node] != k) * blockDim.x; //used to know if value is be stored as ext or int
+        sdata[threadIdx.x + s_ind] = c_values[start_c + ind];
+    }
+    // reduction
+    for (int stride = blockDim.x / 2; stride > 32; stride >>= 1) {
+        if (threadIdx.x < stride && (threadIdx.x + stride) < max_size) {
+            sdata[threadIdx.x] += sdata[threadIdx.x + stride];
+            sdata[threadIdx.x + blockDim.x] += sdata[threadIdx.x + blockDim.x + stride];
+        }
+        __syncthreads();
+    } if (threadIdx.x < 32) {
+        warpReduce(sdata, threadIdx.x);
+        warpReduce(sdata, threadIdx.x + blockDim.x);
+    }
+
+    if (threadIdx.x == 0) {
+        block_sums_i[blockIdx.z * gridDim.x + block_id] = sdata[0];
+        block_sums_e[blockIdx.z * gridDim.x + block_id] = sdata[blockDim.x];
+    }
+}
+
+__global__ void updatePartWeights(int* nodes, int* parts, int* out_i, int* out_e, int* costs_i, int* costs_e) {
+    __extern__ shared int sdata[];
+
+    sdata[threadIdx.x] = out_i[blockIdx.x * blockDim.x + threadIdx.x];
+    sdata[threadIdx.x + blockDim.x] = out_e[blockIdx.x * blockDim.x + threadIdx.x];
+    __syncthreads();
+    for (int stride = blockDim.x / 2; stride > 32; stride >>= 1) {
+        if (threadIdx.x < stride && (threadIdx.x + stride) < max_size) {
+            sdata[threadIdx.x] += sdata[threadIdx.x + stride];
+            sdata[threadIdx.x + blockDim.x] += sdata[threadIdx.x + blockDim.x + stride];
+        }
+        __syncthreads();
+    } if (threadIdx.x < 32) {
+        warpReduce(sdata, threadIdx.x);
+        warpReduce(sdata, threadIdx.x + blockDim.x);
+    }
+    __syncthreads();
+    if (threadIdx.x == 0) {
+        int partition = parts[nodes[blockIdx.x]];
+        atomicSub(&cost_i[partition], sdata[0]);
+        atomicSub(&cost_e[partition], sdata[blockDim.x]);
     }
 }
 // Given k partitions and n*m/100 threads per block
@@ -305,6 +390,36 @@ void destroy(int* parts, int* destr_mask, int destr_nodes, int k, int n, int* in
     cudaDeviceSynchronize();
     // remove nodes
     removeNodes << <grid_dim, block_dim, 2 * THREADS_PER_BLOCK * sizeof(int) >> > (parts, destr_mask, n, int_costs, ext_costs, row_rep, col_rep, block_sums_i, block_sums_e, removed_nodes);
+    cudaDeviceSynchronize(); // probably not needed
+    cudaFree(block_sums_i);
+    cudaFree(block_sums_e);
+    cudaFree(destr_parts);
+    cudaFree(removed_nodes);
+}
+
+void destroy2(int* parts, int* destr_mask, int destr_nodes, int k, int n, int* int_costs, int* ext_costs,
+              int* r_offset, int* r_indexes, int* r_values, int* c_offset, int* c_indexes, int* c_values) {
+    int* block_sums_i, * block_sums_e, * destr_parts, * removed_nodes;
+    cudaMalloc((void**)&block_sums_i, destr_nodes * BLOCKS_PER_ROW * sizeof(int));
+    cudaMalloc((void**)&block_sums_e, destr_nodes * BLOCKS_PER_ROW * sizeof(int));
+    cudaMalloc((void**)&destr_parts, destr_nodes * sizeof(int));
+    dim3 dest_grid(destr_nodes, k, 1);
+    // get partitions of destroyed nodes
+    //getPartitionPerDestrNode << <dest_grid, THREADS_PER_BLOCK >> > (parts, destr_mask, destr_parts, destr_nodes, n);
+    dim3 grid_dim(BLOCKS_PER_ROW, destr_nodes, 1);
+    dim3 block_dim(THREADS_PER_BLOCK, 1, 1);
+    cudaMalloc((void**)&removed_nodes, n * sizeof(int));
+    // set to zero removed_nodes
+    setToZero << <n / THREADS_PER_BLOCK + 1, THREADS_PER_BLOCK >> > (removed_nodes, n);
+    cudaDeviceSynchronize();
+    // remove nodes
+    // removeNodes << <grid_dim, block_dim, 2 * THREADS_PER_BLOCK * sizeof(int) >> > (parts, destr_mask, n, int_costs, ext_costs, row_rep, col_rep, block_sums_i, block_sums_e, removed_nodes);
+    removeNodes2 << <grid_dim, block_dim, 2 * THREADS_PER_BLOCK * sizeof(int) >> > (parts, destr_mask, n, int_costs, ext_costs, 
+                                                                                    r_offset, r_indexes, r_values,
+                                                                                    c_offset, c_indexes, c_values,
+                                                                                    block_sums_i, block_sums_e, removed_nodes);
+    cudaDeviceSynchronize();
+    updatePartWeights << <destr_nodes, BLOCKS_PER_ROW >> > (nodes, parts, block_sums_i, block_sums_e, int_costs, ext_costs);
     cudaDeviceSynchronize(); // probably not needed
     cudaFree(block_sums_i);
     cudaFree(block_sums_e);
