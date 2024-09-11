@@ -143,46 +143,53 @@ __global__ void removeNodes2(int* parts, int* nodes, int n, int* int_costs, int*
     // init of block sums
     // block_sums[k*gridDim.x...k*gridDim+block_id] is the reduction result of block block_id in row k
     // sdata init
-    sdata[threadIdx.x] = 0;
-    sdata[threadIdx.x + blockDim.x] = 0;
+    sdata[2*threadIdx.x] = 0;
+    sdata[2*threadIdx.x + 1] = 0;
 
     // gather values
-    int edge_node;
     int s_ind;
     if (ind == 0) {
         removed_nodes[node] = 1;
     }
     __syncthreads();
 
-    if (ind < r_size) {
+    /*if (ind < r_size) {
         edge_node = r_indexes[start_r + ind];
-        s_ind = (parts[edge_node] != k) * blockDim.x;
         //printf("node %d edge_node %d s_ind %d\n", node, edge_node, s_ind);
-        sdata[threadIdx.x + s_ind] = r_values[start_r + ind];
+        sdata[2*threadIdx.x + (parts[edge_node] != k)] = r_values[start_r + ind] * (1 + (parts[edge_node] == k) * (!removed_nodes[edge_node]));
 
+    }*/
+    for (int i = start_r + 4*ind ; i < r_size && i < start_r + 4*ind + 4; i++){
+        s_ind = parts[r_indexes[i]] != k;
+        sdata[2*threadIdx.x + s_ind] = r_values[i] * (1 + (!s_ind) * (!removed_nodes[r_indexes[i]]));
     }
+    for (int i = start_c + 4*ind - r_size; i < c_size && (i = start_c + 4*ind - r_size + 4); i++){
+        s_ind = parts[c_indexes[i]] != k;
+        sdata[2*threadIdx.x + s_ind] = c_values[i] * (1 + (!s_ind) * (!removed_nodes[c_indexes[i]]));
+    }
+    /*
     else if (ind < r_size + c_size) {
         edge_node = c_indexes[start_c + ind - r_size];
-        s_ind = (parts[edge_node] != k) * blockDim.x; //used to know if value is be stored as ext or int
         //printf("node %d edge_node %d s_ind %d\n", node, edge_node, s_ind);
-        sdata[threadIdx.x + s_ind] = c_values[start_c + ind - r_size];
-    }
+        sdata[2*threadIdx.x + (parts[edge_node] != k)] = c_values[start_c + ind - r_size] * (1 + (parts[edge_node] == k) * (!removed_nodes[edge_node]));
+    }*/
+    __syncthreads();
     // reduction
     for (int stride = blockDim.x / 2; stride > 32; stride >>= 1) {
         if (threadIdx.x < stride && (threadIdx.x + stride) < r_size + c_size) {
-            sdata[threadIdx.x] += sdata[threadIdx.x + stride];
-            sdata[threadIdx.x + blockDim.x] += sdata[threadIdx.x + blockDim.x + stride];
+            sdata[2*threadIdx.x] += sdata[2*threadIdx.x + stride];
+            sdata[2*threadIdx.x + 1] += sdata[2*threadIdx.x + 1 + stride];
         }
         __syncthreads();
     } if (threadIdx.x < 32) {
-        warpReduce(sdata, threadIdx.x);
-        warpReduce(sdata, threadIdx.x + blockDim.x);
+        warpReduce(sdata, 2*threadIdx.x);
+        warpReduce(sdata, 2*threadIdx.x + 1);
     }
 
     if (threadIdx.x == 0) {
         //printf("gathered %d and %d\n", sdata[0], sdata[blockDim.x]);
         block_sums_i[blockIdx.z * gridDim.x + blockIdx.x] = sdata[0];
-        block_sums_e[blockIdx.z * gridDim.x + blockIdx.x] = sdata[blockDim.x];
+        block_sums_e[blockIdx.z * gridDim.x + blockIdx.x] = sdata[1];
     }
 }
 
