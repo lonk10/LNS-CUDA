@@ -3,6 +3,8 @@
 #include <cusparse.h>         // cusparseSparseToDense
 #include <stdio.h>           
 #include <stdlib.h>
+#include <chrono>
+#include <iostream>
 #include "./include/lns.cuh"
 #include "./include/init.cuh"
 #include "./include/util.cuh"
@@ -75,14 +77,22 @@ int main(int argc, char* argv[]){
     printf("###################################\n");
     printf("#### STARTING SERIAL EXECUTION ####\n");
     printf("###################################\n");
-
+    auto start = std::chrono::high_resolution_clock::now();
     lns_serial(partitions, parts_num, nodes_num, edges_num, MAX_MASS, DESTR_PERCENT, row_rep, col_rep);
+    auto end = std::chrono::high_resolution_clock::now();
+    std::cout << "average serial execution: " 
+         << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / MAX_ITER 
+         << "us" << std::endl;
 
     printf("########################################\n");
     printf("#### STARTING PARALLEL_V1 EXECUTION ####\n");
     printf("########################################\n");
-
+    start = std::chrono::high_resolution_clock::now();
     lns_v1(parts, parts_num, nodes_num, edges_num, MAX_MASS, DESTR_PERCENT, row_rep, col_rep);
+    end = std::chrono::high_resolution_clock::now();
+    std::cout << "average parallel execution: " 
+         << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / MAX_ITER 
+         << "us" << std::endl;
     
     free(partitions);
     //free(weights);
