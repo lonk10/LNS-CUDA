@@ -7,7 +7,7 @@
 #include "../include/init.cuh"
 #include "../include/util.cuh"
 
-#define THREADS_PER_BLOCK 64
+#define THREADS_PER_BLOCK 1024
 #define GRIDS 10
 #define BLOCKS_PER_ROW 1024
 
@@ -131,26 +131,33 @@ __global__ void removeNodes2(int* parts, int* nodes, int n, int* int_costs, int*
                              int* block_sums_i, int* block_sums_e, int* removed_nodes) {
     
     int ind = blockIdx.x * blockDim.x + threadIdx.x;
-    extern __shared__ int sdata[];
+    extern __shared__ int sdata_i[], sdata_e[];
 
-    int node = nodes[blockIdx.y];
-    int k = parts[node];
-    int start_r = r_offset[node];
-    int start_c = c_offset[node];
-
-    int r_size = r_offset[node + 1] - start_r;
-    int c_size = c_offset[node + 1] - start_c;
+    if (threadIdx.x == 0) {
+        int node = nodes[blockIdx.z];
+        sdata_i[0] = r_offset[node];
+        sdata_i[1] = c_offset[node];
+        sdata_i[2] = r_offset[node + 1] - sdata_i[0];
+        sdata_i[3] = c_offset[node + 1] - sdata_i[1];
+        sdata_i[4] = parts[node];
+        if (ind == 0) {
+            removed_nodes[node] = 1;
+        }
+    }
+    __syncthreads();
+    int start_r = sdata_i[0];
+    int start_c = sdata_i[1];
+    int r_size = sdata_i[2];
+    int c_size = sdata_i[3];
+    int k = sdata_i[4];
     // init of block sums
     // block_sums[k*gridDim.x...k*gridDim+block_id] is the reduction result of block block_id in row k
     // sdata init
-    sdata[2*threadIdx.x] = 0;
-    sdata[2*threadIdx.x + 1] = 0;
+    sdata_i[threadIdx.x] = 0;
+    sdata_e[threadIdx.x] = 0;
 
     // gather values
-    int s_ind;
-    if (ind == 0) {
-        removed_nodes[node] = 1;
-    }
+    //int s_ind;
     __syncthreads();
 
     /*if (ind < r_size) {
@@ -160,12 +167,18 @@ __global__ void removeNodes2(int* parts, int* nodes, int n, int* int_costs, int*
 
     }*/
     for (int i = start_r + 4*ind ; i < r_size && i < start_r + 4*ind + 4; i++){
-        s_ind = parts[r_indexes[i]] != k;
-        sdata[2*threadIdx.x + s_ind] = r_values[i] * (1 + (!s_ind) * (!removed_nodes[r_indexes[i]]));
+        if (parts[r_indexes[i]] == k){
+            sdata_i[threadIdx.x] += r_values[i] * (1 + (!removed_nodes[r_indexes[i]]));
+        } else {
+            sdata_e[threadIdx.x] += r_values[i];
+        }
     }
     for (int i = start_c + 4*ind - r_size; i < c_size && (i = start_c + 4*ind - r_size + 4); i++){
-        s_ind = parts[c_indexes[i]] != k;
-        sdata[2*threadIdx.x + s_ind] = c_values[i] * (1 + (!s_ind) * (!removed_nodes[c_indexes[i]]));
+        if (parts[c_indexes[i]] == k){
+            sdata_i[threadIdx.x] += c_values[i] * (1 + (!removed_nodes[c_indexes[i]]));
+        } else {
+            sdata_e[threadIdx.x] += c_values[i];
+        }
     }
     /*
     else if (ind < r_size + c_size) {
@@ -177,19 +190,53 @@ __global__ void removeNodes2(int* parts, int* nodes, int n, int* int_costs, int*
     // reduction
     for (int stride = blockDim.x / 2; stride > 32; stride >>= 1) {
         if (threadIdx.x < stride && (threadIdx.x + stride) < r_size + c_size) {
-            sdata[2*threadIdx.x] += sdata[2*threadIdx.x + stride];
-            sdata[2*threadIdx.x + 1] += sdata[2*threadIdx.x + 1 + stride];
+            sdata_i[threadIdx.x] += sdata_i[threadIdx.x + stride];
+            sdata_e[threadIdx.x] += sdata_e[threadIdx.x + stride];
         }
         __syncthreads();
     } if (threadIdx.x < 32) {
-        warpReduce(sdata, 2*threadIdx.x);
-        warpReduce(sdata, 2*threadIdx.x + 1);
+        warpReduce(sdata_i, threadIdx.x);
+        warpReduce(sdata_e, threadIdx.x);
     }
 
     if (threadIdx.x == 0) {
         //printf("gathered %d and %d\n", sdata[0], sdata[blockDim.x]);
-        block_sums_i[blockIdx.z * gridDim.x + blockIdx.x] = sdata[0];
-        block_sums_e[blockIdx.z * gridDim.x + blockIdx.x] = sdata[1];
+        block_sums_i[blockIdx.z * gridDim.x + blockIdx.x] = sdata_i[0];
+        block_sums_e[blockIdx.z * gridDim.x + blockIdx.x] = sdata_e[0];
+    }
+}
+__global__ void removeNodes3(int* parts, int* nodes, int destr_nodes, int* int_costs, int* ext_costs, 
+                            int* r_offset, int* r_indexes, int* r_values, int* c_offset, int* c_indexes, int* c_values,
+                            int* removed_nodes) {
+    int ind = blockIdx.x * blockDim.x + threadIdx.x;
+    if (ind < destr_nodes) {
+        int node = nodes[ind];
+        int k = parts[node];
+        int start, end, size, edge_node, sum_i, sum_e;
+        sum_i = 0;
+        sum_e = 0;
+        start = r_offset[node];
+        end = r_offset[node+1];
+        for (int i = start; i < end; i++){
+            edge_node = r_indexes[i];
+            if (parts[edge_node] == k){
+                sum_i += (1 + !removed_nodes[edge_node]) * r_values[i];
+            } else {
+                sum_e += r_values[i];
+            }
+        }
+        start = c_offset[node];
+        end = c_offset[node+1];
+        for (int i = start; i < end; i++){
+            edge_node = c_indexes[i];
+            if (parts[edge_node] == k){
+                sum_i += (1 + !removed_nodes[edge_node]) * c_values[i];
+            } else {
+                sum_e += c_values[i];
+            }
+        }
+        atomicSub(&int_costs[k], sum_i);
+        atomicSub(&ext_costs[k], sum_e);
     }
 }
 
@@ -376,10 +423,58 @@ __global__ void assignToParts2(int n, int* nodes, int* parts, int* int_costs, in
     }
 }
 
+__device__ void assignToPart(int node, int part, int out_ind, int *parts, int start, int size, int *indexes, int *values,
+                                                             int *out_i, int *out_e){
+    int ind  = blockIdx.x * blockDim.x + threadIdx.x
+    int edge_node;
+    int sum_i = 0;
+    int sum_e = 0;
+    if (ind < size){
+        edge_node = indexes[start_r + ind];
+        if (parts[edges] == part){
+            sum_i = values[start + ind];
+        } else {
+            sum_e = values[start + ind];
+        }
+    }
+    sum_i = warpReduceSum(sum_i);
+    sum_e = warpReduceSum(sum_e);
+    if ((threadIdx.x & 0x1f) == 0) {
+        atomicAdd(&out_i[out_ind], sum_i);
+        atomicAdd(&out_e[out_ind], sum_e);
+    }
+}
+
+// TODO
+__global__ void assignToParts3(int n, int* nodes, int* parts, int* int_costs, int* ext_costs, // util params
+                                int *r_offset, int *r_indexes, int *r_values, int* c_offset, int* c_indexes, int* c_values, // graph
+                                int *out_i, int *out_e) { // results
+
+    int ind = blockIdx.x * blockDim.x + threadIdx.x;
+    int node = nodes[ind];
+    int start_r = r_offset[node];
+    int end_r = r_offset[node+1];
+    int start_c = c_offset[node];
+    int end_c c_offset[node+1];
+    int max_size = size_r < size_c ? size_c : size_r;
+    int block_dim = min(1024, (max_size)/1024 + ((max_size%1024)>0));
+    int gridx = destr_nodes/blockdim + (destr_nodes%blockdim > 0);
+    dim3 grid_dim(gridx, k, 1);
+    assignToPart<<<grid_dim, block_dim>>>(node, i, ind, parts, start_r, size_r, r_indexes, r_values,
+                                        out_i, out_e);
+    assignToPart<<<grid_dim, block_dim, 0, cudaStreamTailLaunch>>>(node, i, ind, parts, start_c, size_c, c_indexes, c_values,
+                                        out_i, out_e);
+}
+
 __global__ void setToZero(int* arr, int n) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid < n) arr[tid] = 0;
 }
+__global__ void setRemovedNodes(int* nodes, int* arr, int n) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid < n) arr[nodes[tid]] = 1;
+}
+
 
 // removes nodes in destr_mask from 
 void destroy(int* parts, int* destr_mask, int destr_nodes, int k, int n, int* int_costs, int* ext_costs, CSR* row_rep, CSC* col_rep) {
@@ -411,24 +506,29 @@ void destroy2(int* parts, int* destr_mask, int destr_nodes, int k, int n, int* i
     cudaMalloc((void**)&block_sums_i, destr_nodes * BLOCKS_PER_ROW * sizeof(int));
     cudaMalloc((void**)&block_sums_e, destr_nodes * BLOCKS_PER_ROW * sizeof(int));
     cudaMalloc((void**)&destr_parts, destr_nodes * sizeof(int));
-    dim3 dest_grid(destr_nodes, k, 1);
     // get partitions of destroyed nodes
     //getPartitionPerDestrNode << <dest_grid, THREADS_PER_BLOCK >> > (parts, destr_mask, destr_parts, destr_nodes, n);
-    dim3 grid_dim(BLOCKS_PER_ROW, destr_nodes, 1);
-    dim3 block_dim(THREADS_PER_BLOCK, 1, 1);
+    int sm_num; 
+    cudaDeviceGetAttribute(&sm_num, cudaDevAttrMultiProcessorCount, 0);
+    int blockdim = min(1024, destr_nodes/sm_num);
+    int gridx = destr_nodes/blockdim + (destr_nodes%blockdim > 0);
+    dim3 grid_dim(gridx, 1, 1);
+    dim3 block_dim(blockdim, 1, 1);
     cudaMalloc((void**)&removed_nodes, n * sizeof(int));
     // set to zero removed_nodes
     setToZero << <n / THREADS_PER_BLOCK + 1, THREADS_PER_BLOCK >> > (removed_nodes, n);
     cudaDeviceSynchronize();
+    setRemovedNodes<<<destr_nodes / THREADS_PER_BLOCK + 1, THREADS_PER_BLOCK >> > (destr_mask, removed_nodes, destr_nodes);
+    cudaDeviceSynchronize();
     // remove nodes
     // removeNodes << <grid_dim, block_dim, 2 * THREADS_PER_BLOCK * sizeof(int) >> > (parts, destr_mask, n, int_costs, ext_costs, row_rep, col_rep, block_sums_i, block_sums_e, removed_nodes);
-    removeNodes2 << <grid_dim, block_dim, 2 * THREADS_PER_BLOCK * sizeof(int) >> > (parts, destr_mask, n, int_costs, ext_costs, 
+    removeNodes3 << <grid_dim, block_dim, 2 * THREADS_PER_BLOCK * sizeof(int) >> > (parts, destr_mask, destr_nodes, int_costs, ext_costs, 
                                                                                     r_offset, r_indexes, r_values,
                                                                                     c_offset, c_indexes, c_values,
-                                                                                    block_sums_i, block_sums_e, removed_nodes);
+                                                                                    removed_nodes);
     cudaDeviceSynchronize();
-    updatePartWeights << <destr_nodes, BLOCKS_PER_ROW, 2 * BLOCKS_PER_ROW * sizeof(int)>> > (destr_mask, parts, block_sums_i, block_sums_e, int_costs, ext_costs);
-    cudaDeviceSynchronize(); // probably not needed
+    //updatePartWeights << <destr_nodes, BLOCKS_PER_ROW, 2 * BLOCKS_PER_ROW * sizeof(int)>> > (destr_mask, parts, block_sums_i, block_sums_e, int_costs, ext_costs);
+    //cudaDeviceSynchronize(); // probably not needed
     cudaFree(block_sums_i);
     cudaFree(block_sums_e);
     cudaFree(destr_parts);
