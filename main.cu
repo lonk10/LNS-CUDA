@@ -9,6 +9,7 @@
 #include "./include/init.cuh"
 #include "./include/util.cuh"
 #include "./include/serial.cuh"
+#include "./include/parallel_v0.cuh"
 #include "./include/parallel_v1.cuh"
 
 
@@ -81,8 +82,8 @@ int main(int argc, char* argv[]){
     lns_serial(partitions, parts_num, nodes_num, edges_num, MAX_MASS, DESTR_PERCENT, row_rep, col_rep);
     auto end = std::chrono::high_resolution_clock::now();
     std::cout << "average serial execution: " 
-         << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / MAX_ITER 
-         << "us" << std::endl;
+         << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() / MAX_ITER 
+         << "ms" << std::endl;
 
     printf("########################################\n");
     printf("#### STARTING PARALLEL_V1 EXECUTION ####\n");
@@ -91,8 +92,8 @@ int main(int argc, char* argv[]){
     lns_v1(parts, parts_num, nodes_num, edges_num, MAX_MASS, DESTR_PERCENT, row_rep, col_rep);
     end = std::chrono::high_resolution_clock::now();
     std::cout << "average parallel execution: " 
-         << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / MAX_ITER 
-         << "us" << std::endl;
+         << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() / MAX_ITER 
+         << "ms" << std::endl;
     
     free(partitions);
     //free(weights);
