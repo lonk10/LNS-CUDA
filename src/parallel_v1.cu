@@ -212,7 +212,7 @@ __global__ void removeNodes3(int* parts, int* nodes, int destr_nodes, int* int_c
     if (ind < destr_nodes) {
         int node = nodes[ind];
         int k = parts[node];
-        int start, end, size, edge_node, sum_i, sum_e;
+        int start, end, edge_node, sum_i, sum_e;
         sum_i = 0;
         sum_e = 0;
         start = r_offset[node];
@@ -451,19 +451,39 @@ __global__ void assignToParts3(int n, int* nodes, int* parts, int* int_costs, in
                                 int *out_i, int *out_e) { // results
 
     int ind = blockIdx.x * blockDim.x + threadIdx.x;
-    int node = nodes[ind];
-    int start_r = r_offset[node];
-    int end_r = r_offset[node+1];
-    int start_c = c_offset[node];
-    int end_c c_offset[node+1];
-    int max_size = size_r < size_c ? size_c : size_r;
-    int block_dim = min(1024, (max_size)/1024 + ((max_size%1024)>0));
-    int gridx = destr_nodes/blockdim + (destr_nodes%blockdim > 0);
-    dim3 grid_dim(gridx, k, 1);
-    assignToPart<<<grid_dim, block_dim>>>(node, i, ind, parts, start_r, size_r, r_indexes, r_values,
-                                        out_i, out_e);
-    assignToPart<<<grid_dim, block_dim, 0, cudaStreamTailLaunch>>>(node, i, ind, parts, start_c, size_c, c_indexes, c_values,
-                                        out_i, out_e);
+    int k = blockIdx.y;
+    if (ind < destr_nodes) {
+        int node = nodes[ind];
+        int start, end, res, edge_node, sum_i, sum_e;
+        sum_i = 0;
+        sum_e = 0;
+        start = r_offset[node];
+        end = r_offset[node+1];
+        for (int i = start; i < end; i++){
+            edge_node = r_indexes[i];
+            if (parts[edge_node] == k){
+                res = (1 + !removed_nodes[edge_node]) * r_values[i];
+                sum_i += res;
+                if (parts[node] != k) sum_e -= res; // remove edge from the outer ones if part is not the og
+            } else {
+                sum_e += r_values[i];
+            }
+        }
+        start = c_offset[node];
+        end = c_offset[node+1];
+        for (int i = start; i < end; i++){
+            edge_node = c_indexes[i];
+            if (parts[edge_node] == k){
+                res = (1 + !removed_nodes[edge_node]) * c_values[i];
+                sum_i += res;
+                if (parts[node] != k) sum_e -= res;
+            } else {
+                sum_e += c_values[i];
+            }
+        }
+        out_i[ind*n+k] = sum_i;
+        out_e[ind*n+k] = sum_e;
+    }
 }
 
 __global__ void setToZero(int* arr, int n) {
@@ -624,7 +644,7 @@ void repair2(int* parts, int k, int* destr_mask, int n, int destr_nodes, int m, 
     cudaMalloc((void**)&d_result, arr_size * sizeof(float));
     float* result = (float*)malloc(arr_size * sizeof(float));
     int blocks = n / THREADS_PER_BLOCK + 1; // blocks/4 todo
-    dim3 grid_dim(blocks/4, k, destr_nodes); // n/64 * k * m
+    dim3 grid_dim(destr_nodes / THREADS_PER_BLOCK + 1, k, 1); // n/64 * k * m
     dim3 block_dim(THREADS_PER_BLOCK, 1, 1);
     int* out_e, * out_i;
     //printf("destr_nodes %d\n", destr_nodes);
@@ -637,7 +657,7 @@ void repair2(int* parts, int k, int* destr_mask, int n, int destr_nodes, int m, 
     setToZero<<<arr_size/1024 + 1, 1024>>>(out_e, arr_size);
     setToZero<<<arr_size/1024 + 1, 1024>>>(out_i, arr_size);
     cudaDeviceSynchronize();
-    assignToParts2 << <grid_dim, block_dim, 4 * sizeof(int) >> > (n, destr_mask, parts, int_costs, ext_costs, 
+    assignToParts3 << <grid_dim, block_dim, 4 * sizeof(int) >> > (n, destr_mask, parts, int_costs, ext_costs, 
                                                                                       r_offset, r_indexes, r_values,
                                                                                       c_offset, c_indexes, c_values,
                                                                                       out_i, out_e);
