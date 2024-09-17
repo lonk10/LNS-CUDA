@@ -46,24 +46,18 @@ void computeRandomAssignment(int * mask, int n, int m, int p){
     }
 }
 
-void destroy(int *parts, int k, int *destr_mask, int n, int m, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
+void destroy(int *parts, int k, int *destr_mask, int n, int destr_nodes, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
     int ind;
     int node;
-    for (int i = 0; i < k; i++){
-        for (int j = 0; j < (n*m/100); j++){
-            node = destr_mask[j];
-            ind = i*n+node;
-            if (parts[ind] == 1){
-                parts[ind] = 0;
-                //printf("destroyed node %d from part %d\n", node, i);
-                removeFromCost(parts, i, n, node, int_costs, ext_costs, csr_rep, csc_rep);
-                //printf("updated costs\n");
-            }
-        }
+    for (int j = 0; j < destr_nodes; j++){
+        node = destr_mask[j];        
+        //printf("destroyed node %d from part %d\n", node, i);
+        removeFromCost(parts, n, node, int_costs, ext_costs, csr_rep, csc_rep);
+        //printf("updated costs\n");
     }
 }
 
-void repair(int *parts, int *destr_mask, int n, int m, int parts_num, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
+void repair(int *parts, int *destr_mask, int n, int destr_nodes, int parts_num, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
     //int i = 0;
     int k;
     int node;
@@ -73,7 +67,7 @@ void repair(int *parts, int *destr_mask, int n, int m, int parts_num, int *int_c
     int *temp_ext_cost = (int *)malloc(parts_num*sizeof(int));
     float old_cost = computeCost(int_costs, ext_costs, parts_num);
     
-    for (int i = 0; i < (n*m/100); i++){
+    for (int i = 0; i < destr_nodes; i++){
         node = destr_mask[i];
         best_cost = 0;
         best_k = 0;
@@ -82,21 +76,22 @@ void repair(int *parts, int *destr_mask, int n, int m, int parts_num, int *int_c
             memcpy(temp_ext_cost, ext_costs, parts_num*sizeof(int));
             addToCost(parts, j, n, node, temp_int_cost, temp_ext_cost, csr_rep, csc_rep);
             temp_cost = computeCost(temp_int_cost, temp_ext_cost, parts_num) - old_cost;
-            //printf("old cost: %f new cost: %f\n", best_cost, temp_cost);
+            
             if (temp_cost > best_cost){
                 best_cost = temp_cost;
                 best_k = j;
             }
         }
-        parts[best_k*n+node] = 1;
+        //printf("%d\n", i);
+        parts[node] = best_k;
         addToCost(parts, best_k, n, node, int_costs, ext_costs, csr_rep, csc_rep);
     }
 }
 
 
 void lns_serial(int *in_parts, int parts_num, int nodes_num, int edges_num, int max_mass, int m, CSR *row_rep, CSC *col_rep){
-    int *best = (int *) malloc(nodes_num*parts_num*sizeof(int));
-    for (int i = 0; i < nodes_num*parts_num; i++){
+    int *best = (int *) malloc(nodes_num*sizeof(int));
+    for (int i = 0; i < nodes_num; i++){
         best[i] = in_parts[i];
     }
     //compute node costs
@@ -106,7 +101,11 @@ void lns_serial(int *in_parts, int parts_num, int nodes_num, int edges_num, int 
     //compute edge costs
     int *ext_cost = (int *)malloc(parts_num*sizeof(int));
     int *temp_ext_cost = (int *)malloc(parts_num*sizeof(int));
-    computeAllEdgeCost(best, row_rep, col_rep, parts_num, nodes_num, edges_num, int_cost, ext_cost);
+    newComputeAllEdgeCost(best, row_rep, col_rep, parts_num, nodes_num, edges_num, int_cost, ext_cost);
+    /*
+    for (int j = 0; j < parts_num; j++){
+        printf("part %d %d", j, int_cost[j]);
+    }*/
     float best_cost = computeCost(int_cost, ext_cost, parts_num);
     float new_cost;
     int destr_nodes = nodes_num*m/100;
@@ -122,19 +121,19 @@ void lns_serial(int *in_parts, int parts_num, int nodes_num, int edges_num, int 
         for (int i = 0; i < destr_nodes; i++){
             destr_mask[i] = 0;
         }
-        memcpy(temp, in_parts, nodes_num*parts_num*sizeof(int));
+        memcpy(temp, in_parts, nodes_num*sizeof(int));
         memcpy(temp_int_cost, int_cost, parts_num*sizeof(int));
         memcpy(temp_ext_cost, ext_cost, parts_num*sizeof(int));
 
         //printf("Destroy step %d\n", iter);
         //destroy step
         computeRandomMask(destr_mask, nodes_num, m);
-        destroy(temp, parts_num, destr_mask, nodes_num, m, temp_int_cost, temp_ext_cost, row_rep, col_rep);
+        destroy(temp, parts_num, destr_mask, nodes_num, destr_nodes, temp_int_cost, temp_ext_cost, row_rep, col_rep);
         printf("cost after destroy: %f\n", computeCost(temp_int_cost, temp_ext_cost, parts_num));
         //printf("Repair step %d\n", iter);
         //repair step
         //computeRandomAssignment(asgn_mask, nodes_num, m, parts_num);
-        repair(temp, destr_mask, nodes_num, m, parts_num, temp_int_cost, temp_ext_cost, row_rep, col_rep);
+        repair(temp, destr_mask, nodes_num, destr_nodes, parts_num, temp_int_cost, temp_ext_cost, row_rep, col_rep);
 
         //printf("Accept step %d\n", iter);
         //accept step
@@ -143,7 +142,7 @@ void lns_serial(int *in_parts, int parts_num, int nodes_num, int edges_num, int 
             if (new_cost > best_cost)
             printf("New best cost is: %f\n", new_cost);
                 best_cost = new_cost;
-                memcpy(best, temp, nodes_num*parts_num*sizeof(int));
+                memcpy(best, temp, nodes_num*sizeof(int));
         }
         //debug only
         //checkNodesPerPart(temp, parts_num, nodes_num);

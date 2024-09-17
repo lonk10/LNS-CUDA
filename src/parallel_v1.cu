@@ -268,7 +268,7 @@ void repair_v1(int* parts, int k, int* destr_mask, int n, int destr_nodes, int m
                                                                                       c_offset, c_indexes, c_values,
                                                                                       out_i, out_e);
     cudaDeviceSynchronize();
-    gatherResults << <destr_nodes/1024 + 1, 1024 >> > (out_i, out_e, k, int_costs, ext_costs, d_result, destr_nodes);
+    gatherResults << <destr_nodes/128 + 1, 128 >> > (out_i, out_e, k, int_costs, ext_costs, d_result, destr_nodes);
     cudaDeviceSynchronize();
     assignToBestPart_v1 << <destr_nodes, k, 2 * k * sizeof(int) >> > (k, d_result, n, destr_mask, parts, int_costs, ext_costs, out_i, out_e);
     cudaDeviceSynchronize();

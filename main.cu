@@ -36,7 +36,6 @@ int main(int argc, char* argv[]){
     // init structures
     //int *weights = (int *) malloc(nodes_num*sizeof(int));
     int *parts = (int *) malloc(nodes_num*sizeof(int));
-    int *partitions = (int *) malloc(parts_num*nodes_num*sizeof(int));
     int *mat = (int *) malloc(nodes_num*nodes_num*sizeof(int));
     // read rest of the input
     
@@ -46,7 +45,7 @@ int main(int argc, char* argv[]){
     int *h_csr_columns = (int *) malloc(edges_num * sizeof(int));
     int *h_csr_values = (int *) malloc(edges_num * sizeof(int));
     
-    readInput(in_file, partitions, parts, nodes_num, edges_num, parts_num, h_csr_offsets, h_csr_columns, h_csr_values);
+    readInput(in_file, parts, nodes_num, edges_num, parts_num, h_csr_offsets, h_csr_columns, h_csr_values);
     //csrSetup(nodes_num, edges_num, mat, h_csr_offsets, h_csr_columns, h_csr_values);
 
     // setup csc representation
@@ -79,7 +78,7 @@ int main(int argc, char* argv[]){
     printf("#### STARTING SERIAL EXECUTION ####\n");
     printf("###################################\n");
     auto start = std::chrono::high_resolution_clock::now();
-    lns_serial(partitions, parts_num, nodes_num, edges_num, MAX_MASS, DESTR_PERCENT, row_rep, col_rep);
+    lns_serial(parts, parts_num, nodes_num, edges_num, MAX_MASS, DESTR_PERCENT, row_rep, col_rep);
     auto end = std::chrono::high_resolution_clock::now();
     std::cout << "average serial execution: " 
          << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() / MAX_ITER 
@@ -95,7 +94,6 @@ int main(int argc, char* argv[]){
          << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() / MAX_ITER 
          << "ms" << std::endl;
     
-    free(partitions);
     //free(weights);
     free(parts);
     free(row_rep -> offsets);

@@ -25,10 +25,12 @@ int checkMass(int *int_costs, int parts_num, int max_mass){
 float computeCost(int *int_costs, int *ext_costs, int k){
     float res = 0;
     float u = 0;
+    float n;
     for (int i = 0; i < k; i++){
         u = (float) (int_costs[i]);
         //printf("res %d:%f ", i, 100*(u/ (u+(float)ext_costs[i])));
-        res += 100 * (u / (u + (float) ext_costs[i])); 
+        n = (u / (u + (float) ext_costs[i]));
+        if (!isnan(n)) res += 100 * n; 
     }
     //printf("\n");
     return res;
@@ -116,6 +118,7 @@ void newComputeAllEdgeCost(int* parts, CSR* row_rep, CSC* col_rep, int parts_num
                 ext_res += col_rep->values[j];
             }
         }
+        //printf("adding %d and %d to part %d\n", int_res, ext_res, partition);
         int_costs[partition] += int_res;
         ext_costs[partition] += ext_res;
     }
@@ -149,29 +152,34 @@ void computeRandomMask(int* mask, int n, int m) {
 }
 
 // Removes costs tied to node n in partition k
-void removeFromCost(int *parts, int k, int n, int node, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
+void removeFromCost(int *parts, int n, int node, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
     int res = 0;
     int start = csr_rep -> offsets[node];
     int end = csr_rep -> offsets[node+1];
     int edge_node;
+    int k = parts[node];
+    int sum_i = 0;
+    int sum_e = 0;
     for (int z = start; z < end; z++){
         edge_node = csr_rep -> col_indexes[z];
-        if (parts[k*n+edge_node] == 0){ // only remove cost of edges going in/out of the partition
-            ext_costs[k] -= csr_rep -> values[z];
+        if (parts[edge_node] == k){ // only remove cost of edges going in/out of the partition
+            sum_i += csr_rep -> values[z];
         } else {
-            int_costs[k] -= csr_rep -> values[z];
+            sum_e += csr_rep -> values[z];
         }
     }
     start = csc_rep -> offsets[node];
     end = csc_rep -> offsets[node+1];
     for (int z = start; z < end; z++){
         edge_node = csc_rep -> row_indexes[z];
-        if (parts[k*n+edge_node] == 0){ // only add cost of edges going into the partition
-            ext_costs[k] -= csc_rep -> values[z];
+        if (parts[edge_node] == k){ // only add cost of edges going into the partition
+            sum_i += csc_rep -> values[z];
         } else {
-            int_costs[k] -= csc_rep -> values[z];
+            sum_e += csc_rep -> values[z];
         }
     }
+    int_costs[k] -= sum_i;
+    ext_costs[k] -= sum_e;
 }
 
 // Adds costs tied to node n in partition k
@@ -182,20 +190,20 @@ int addToCost(int *parts, int k, int n, int node, int *int_costs, int *ext_costs
     int edge_node;
     for (int z = start; z < end; z++){
         edge_node = csr_rep -> col_indexes[z];
-        if (parts[k*n+edge_node] == 0){ // only add cost of edges going out of the partition
-            ext_costs[k] += csr_rep -> values[z];
-        } else {
+        if (parts[edge_node] == k){ // only add cost of edges going out of the partition
             int_costs[k] += csr_rep -> values[z];
+        } else {
+            ext_costs[k] += csr_rep -> values[z];
         }
     }
     start = csc_rep -> offsets[node];
     end = csc_rep -> offsets[node+1];
     for (int z = start; z < end; z++){
         edge_node = csc_rep -> row_indexes[z];
-        if (parts[k*n+edge_node] == 0){ // only add cost of edges going into the partition
-            ext_costs[k] += csc_rep -> values[z];
-        } else {
+        if (parts[edge_node] == k){ // only add cost of edges going into the partition
             int_costs[k] += csc_rep -> values[z];
+        } else {
+            ext_costs[k] += csc_rep -> values[z];
         }
     }
     return res;
