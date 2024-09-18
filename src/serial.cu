@@ -95,22 +95,26 @@ void lns_serial(int *in_parts, int parts_num, int nodes_num, int edges_num, int 
         best[i] = in_parts[i];
     }
     //compute node costs
+    printf("a");
     int *int_cost = (int *)malloc(parts_num*sizeof(int));
     int *temp_int_cost = (int *)malloc(parts_num*sizeof(int));
+    printf("b");
     //computeNodeCost(best, weights, parts_num, nodes_num, node_cost);
     //compute edge costs
     int *ext_cost = (int *)malloc(parts_num*sizeof(int));
     int *temp_ext_cost = (int *)malloc(parts_num*sizeof(int));
     newComputeAllEdgeCost(best, row_rep, col_rep, parts_num, nodes_num, edges_num, int_cost, ext_cost);
-    
+    printf("c");
+    /*
     for (int j = 0; j < parts_num; j++){
         printf("part %d: %d %d\n", j, int_cost[j], ext_cost[j]);
-    }
+    }*/
     float best_cost = computeCost(int_cost, ext_cost, parts_num);
     float new_cost;
     int destr_nodes = nodes_num*m/100;
     int *destr_mask = (int *)malloc(destr_nodes*sizeof(int));
-    int *temp = (int *) malloc(nodes_num*parts_num*sizeof(int));
+    int *temp = (int *) malloc(nodes_num*sizeof(int));
+    
     srand(time(NULL));
 
     printf("Initial cost is: %f\n", best_cost);

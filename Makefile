@@ -13,7 +13,7 @@ CUDA_ROOT_DIR=/usr/local/cuda
 # NVCC compiler options:
 NVCC=nvcc
 CUDA_TOOLKIT := $(shell dirname $$(command -v nvcc))/..
-NVCC_FLAGS= -I$(CUDA_TOOLKIT)/include -m 64 --compiler-options=-Wall --compiler-options=-Wextra --compiler-options=-Wpedantic --compiler-options=-Wconversion -Xcompiler "-g -pg" -g -pg
+NVCC_FLAGS= -I$(CUDA_TOOLKIT)/include -m 64 -G --compiler-options=-Wall --compiler-options=-Wextra --compiler-options=-Wpedantic --compiler-options=-Wconversion -Xcompiler "-g -pg" -g -pg
 NVCC_LIBS= -lcusparse
 
 # CUDA library directory:
@@ -44,7 +44,7 @@ INC_DIR = include
 EXE = run_test
 
 # Object files:
-OBJS = $(OBJ_DIR)/init.o $(OBJ_DIR)/util.o $(OBJ_DIR)/serial.o $(OBJ_DIR)/parallel_v1.o 
+OBJS = $(OBJ_DIR)/init.o $(OBJ_DIR)/util.o $(OBJ_DIR)/serial.o $(OBJ_DIR)/parallel_v1.o $(OBJ_DIR)/parallel_v0.o
 
 ##########################################################
 
@@ -79,7 +79,10 @@ $(OBJ_DIR)/serial.o : $(SRC_DIR)/serial.cu $(INC_DIR)/init.cuh $(INC_DIR)/lns.cu
 $(OBJ_DIR)/parallel_v1.o : $(SRC_DIR)/parallel_v1.cu $(INC_DIR)/init.cuh $(INC_DIR)/lns.cuh $(INC_DIR)/util.cuh
 	$(NVCC) $(NVCC_FLAGS) -c $< -o $@ $(NVCC_LIBS)
 
-$(OBJ_DIR)/main.o : main.cu $(INC_DIR)/init.cuh $(INC_DIR)/lns.cuh $(INC_DIR)/util.cuh $(INC_DIR)/serial.cuh $(INC_DIR)/parallel_v1.cuh
+$(OBJ_DIR)/parallel_v0.o : $(SRC_DIR)/parallel_v0.cu $(INC_DIR)/init.cuh $(INC_DIR)/lns.cuh $(INC_DIR)/util.cuh $(INC_DIR)/parallel_v1.cuh
+	$(NVCC) $(NVCC_FLAGS) -c $< -o $@ $(NVCC_LIBS)
+
+$(OBJ_DIR)/main.o : main.cu $(INC_DIR)/init.cuh $(INC_DIR)/lns.cuh $(INC_DIR)/util.cuh $(INC_DIR)/serial.cuh $(INC_DIR)/parallel_v1.cuh $(INC_DIR)/parallel_v0.cuh
 	$(NVCC) $(NVCC_FLAGS) -c $< -o $@ $(NVCC_LIBS)
 
 # Clean objects in object directory.

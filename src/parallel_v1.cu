@@ -286,7 +286,7 @@ __global__ void resetMask(int* mask, int size) {
 }
 
 void lns_v1(int* in_parts, int parts_num, int nodes_num, int edges_num, int max_mass, int m, CSR* row_rep, CSC* col_rep) {
-    int* best = (int*)malloc(nodes_num * parts_num * sizeof(int));
+    int* best = (int*)malloc(nodes_num * sizeof(int));
     for (int i = 0; i < nodes_num; i++) {
         best[i] = in_parts[i];
     }

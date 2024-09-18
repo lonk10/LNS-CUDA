@@ -36,7 +36,7 @@ int main(int argc, char* argv[]){
     // init structures
     //int *weights = (int *) malloc(nodes_num*sizeof(int));
     int *parts = (int *) malloc(nodes_num*sizeof(int));
-    int *mat = (int *) malloc(nodes_num*nodes_num*sizeof(int));
+    //int *mat = (int *) malloc(nodes_num*nodes_num*sizeof(int));
     // read rest of the input
     
 
