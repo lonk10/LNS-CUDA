@@ -7,14 +7,11 @@
 
 
 // Input read function
-void readInput(FILE *in_file, int *partitions, int *parts, int nodes_num, int edges_num, int parts_num, int *offsets, int *indexes, int *values){
+void readInput(FILE *in_file, int *parts, int nodes_num, int edges_num, int parts_num, int *offsets, int *indexes, int *values){
 
     // gather nodes (weigth and partition)
     int weight;
     char line[100];
-    for (int i = 0; i < nodes_num*parts_num; i++){
-        partitions[i] = 0;
-    }
 
     //printf("Number of nodes: %d \nNumber of edges: %d\n", nodes_num, edges_num);
     //printf("Gathering nodes...\n");
@@ -22,7 +19,6 @@ void readInput(FILE *in_file, int *partitions, int *parts, int nodes_num, int ed
     for (int i = 0; i < nodes_num; i++){
         fgets(line, 100, in_file);
         sscanf(line, "%d %d", &a, &parts[i]);
-        partitions[parts[i]*nodes_num+i] = 1;
         //printf("Assigned node %d to partition %d\n", i, parts[i]);
     }
 

@@ -1,0 +1,1 @@
+void lns_v0(int *in_parts, int parts_num, int nodes_num, int edges_num, int max_mass, int m, CSR *row_rep, CSC *col_rep);
