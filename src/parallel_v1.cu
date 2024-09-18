@@ -181,7 +181,7 @@ void destroy_v1(int* parts, int* destr_mask, int destr_nodes, int k, int n, int*
     //getPartitionPerDestrNode << <dest_grid, THREADS_PER_BLOCK >> > (parts, destr_mask, destr_parts, destr_nodes, n);
     int sm_num; 
     cudaDeviceGetAttribute(&sm_num, cudaDevAttrMultiProcessorCount, 0);
-    int blockdim = min(1024, destr_nodes/sm_num);
+    int blockdim = min(1024, destr_nodes/sm_num + (destr_nodes%sm_num > 0));
     int gridx = destr_nodes/blockdim + (destr_nodes%blockdim > 0);
     dim3 grid_dim(gridx, 1, 1);
     dim3 block_dim(blockdim, 1, 1);
@@ -389,14 +389,15 @@ void lns_v1(int* in_parts, int parts_num, int nodes_num, int edges_num, int max_
         if (checkMass(temp_int_cost, parts_num, max_mass)) {
             new_cost = computeCost(temp_int_cost, temp_ext_cost, parts_num);
             printf("New cost found is: %f\n", new_cost);
-            if (new_cost > best_cost)
+            if (new_cost > best_cost){
                 //printf("New best cost is: %f\n", new_cost);
                 best_cost = new_cost;
-            cudaMemcpy(best, temp, nodes_num * sizeof(int), cudaMemcpyDeviceToHost);
+                cudaMemcpy(best, temp, nodes_num * sizeof(int), cudaMemcpyDeviceToHost);
+            }
         }
     }
     printf("Final cost is: %f\n", best_cost);
-
+    
     //free
     free(best);
     free(int_cost);

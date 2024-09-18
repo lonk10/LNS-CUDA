@@ -91,8 +91,8 @@ int main(int argc, char* argv[]){
     lns_v1(parts, parts_num, nodes_num, edges_num, MAX_MASS, DESTR_PERCENT, row_rep, col_rep);
     end = std::chrono::high_resolution_clock::now();
     std::cout << "average parallel execution: " 
-         << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() / MAX_ITER 
-         << "ms" << std::endl;
+         << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / MAX_ITER 
+         << "us" << std::endl;
     
     //free(weights);
     free(parts);
