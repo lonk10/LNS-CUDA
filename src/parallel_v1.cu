@@ -309,32 +309,50 @@ void lns_v1(int* in_parts, int parts_num, int nodes_num, int edges_num, int max_
     cudaMalloc((void**)&temp, nodes_num * sizeof(int));
 
     // copy CSR / CSC to device
+    // Create CUDA streams
+    cudaStream_t stream1, stream2;
+    cudaStreamCreate(&stream1);
+    cudaStreamCreate(&stream2);
     CSR* d_row_rep;
     CSC* d_col_rep;
     int* row_offsets, * col_offsets, * col_indexes, * row_indexes, * row_values, * col_values;
     printf("Allocation d_row, d_col\n");
-    cudaMalloc((void**)&d_row_rep, sizeof(CSR));
-    cudaMalloc((void**)&row_offsets, (nodes_num + 1) * sizeof(int));
-    cudaMalloc((void**)&col_indexes, edges_num * sizeof(int));
-    cudaMalloc((void**)&row_values, edges_num * sizeof(int));
-    cudaMalloc((void**)&d_col_rep, sizeof(CSC));
-    cudaMalloc((void**)&col_offsets, (nodes_num + 1) * sizeof(int));
-    cudaMalloc((void**)&row_indexes, edges_num * sizeof(int));
-    cudaMalloc((void**)&col_values, edges_num * sizeof(int));
+    cudaMallocAsync((void**)&d_row_rep, sizeof(CSR), stream1);
+    cudaMallocAsync((void**)&row_offsets, (nodes_num + 1) * sizeof(int), stream1);
+    cudaMallocAsync((void**)&col_indexes, edges_num * sizeof(int), stream1);
+    cudaMallocAsync((void**)&row_values, edges_num * sizeof(int), stream1);
+    cudaMallocAsync((void**)&d_col_rep, sizeof(CSC), stream2);
+    cudaMallocAsync((void**)&col_offsets, (nodes_num + 1) * sizeof(int), stream2);
+    cudaMallocAsync((void**)&row_indexes, edges_num * sizeof(int), stream2);
+    cudaMallocAsync((void**)&col_values, edges_num * sizeof(int), stream2);
     printf("Copying temps\n");
-    cudaMemcpy(&(d_row_rep->offsets), &row_offsets, sizeof(int*), cudaMemcpyHostToDevice);
-    cudaMemcpy(&(d_row_rep->col_indexes), &col_indexes, sizeof(int*), cudaMemcpyHostToDevice);
-    cudaMemcpy(&(d_row_rep->values), &row_values, sizeof(int*), cudaMemcpyHostToDevice);
-    cudaMemcpy(&(d_col_rep->offsets), &col_offsets, sizeof(int*), cudaMemcpyHostToDevice);
-    cudaMemcpy(&(d_col_rep->row_indexes), &row_indexes, sizeof(int*), cudaMemcpyHostToDevice);
-    cudaMemcpy(&(d_col_rep->values), &col_values, sizeof(int*), cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(&(d_row_rep->offsets), &row_offsets, sizeof(int*), cudaMemcpyHostToDevice, stream1);
+    cudaMemcpyAsync(&(d_row_rep->col_indexes), &col_indexes, sizeof(int*), cudaMemcpyHostToDevice, stream1);
+    cudaMemcpyAsync(&(d_row_rep->values), &row_values, sizeof(int*), cudaMemcpyHostToDevice, stream1);
+    cudaMemcpyAsync(&(d_col_rep->offsets), &col_offsets, sizeof(int*), cudaMemcpyHostToDevice, stream2);
+    cudaMemcpyAsync(&(d_col_rep->row_indexes), &row_indexes, sizeof(int*), cudaMemcpyHostToDevice, stream2);
+    cudaMemcpyAsync(&(d_col_rep->values), &col_values, sizeof(int*), cudaMemcpyHostToDevice, stream2);
     printf("Copying into temps\n");
-    cudaMemcpy(row_offsets, row_rep->offsets, (nodes_num + 1) * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(col_indexes, row_rep->col_indexes, edges_num * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(row_values, row_rep->values, edges_num * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(col_offsets, col_rep->offsets, (nodes_num + 1) * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(row_indexes, col_rep->row_indexes, edges_num * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(col_values, col_rep->values, edges_num * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(row_offsets, row_rep->offsets, (nodes_num + 1) * sizeof(int), cudaMemcpyHostToDevice, stream1);
+    cudaMemcpyAsync(col_indexes, row_rep->col_indexes, edges_num * sizeof(int), cudaMemcpyHostToDevice, stream1);
+    cudaMemcpyAsync(row_values, row_rep->values, edges_num * sizeof(int), cudaMemcpyHostToDevice, stream1);
+    cudaMemcpyAsync(col_offsets, col_rep->offsets, (nodes_num + 1) * sizeof(int), cudaMemcpyHostToDevice, stream2);
+    cudaMemcpyAsync(row_indexes, col_rep->row_indexes, edges_num * sizeof(int), cudaMemcpyHostToDevice, stream2);
+    cudaMemcpyAsync(col_values, col_rep->values, edges_num * sizeof(int), cudaMemcpyHostToDevice, stream2);
+
+    // Synchronize the streams before finishing
+    cudaStreamSynchronize(stream1);
+    cudaStreamSynchronize(stream2);
+
+    // Destroy streams to release resources
+    cudaStreamDestroy(stream1);
+    cudaStreamDestroy(stream2);
+
+    //pin memory that is frequently copied
+    cudaHostRegister(in_parts, nodes_num*sizeof(int));
+    cudaHostRegister(int_costs, parts_num*sizeof(int));
+    cudaHostRegister(ext_costs, parts_num*sizeof(int));
+
 
 
 
@@ -353,8 +371,8 @@ void lns_v1(int* in_parts, int parts_num, int nodes_num, int edges_num, int max_
         cudaMemcpy(d_temp_int_cost, int_cost, parts_num * sizeof(int), cudaMemcpyHostToDevice);
         cudaMemcpy(d_temp_ext_cost, ext_cost, parts_num * sizeof(int), cudaMemcpyHostToDevice);
 
-        cudaMemcpy(temp_int_cost, d_temp_int_cost, parts_num * sizeof(int), cudaMemcpyDeviceToHost);
-        cudaMemcpy(temp_ext_cost, d_temp_ext_cost, parts_num * sizeof(int), cudaMemcpyDeviceToHost);
+        //cudaMemcpy(temp_int_cost, d_temp_int_cost, parts_num * sizeof(int), cudaMemcpyDeviceToHost);
+        //cudaMemcpy(temp_ext_cost, d_temp_ext_cost, parts_num * sizeof(int), cudaMemcpyDeviceToHost);
 
 
         //destroy step
@@ -368,9 +386,9 @@ void lns_v1(int* in_parts, int parts_num, int nodes_num, int edges_num, int max_
                  row_offsets, col_indexes, row_values,
                  col_offsets, row_indexes, col_values);
         //printf("Destroy end\n");
-        cudaMemcpy(temp_int_cost, d_temp_int_cost, parts_num * sizeof(int), cudaMemcpyDeviceToHost);
-        cudaMemcpy(temp_ext_cost, d_temp_ext_cost, parts_num * sizeof(int), cudaMemcpyDeviceToHost);
-        printf("Cost after destroy %f \n", computeCost(temp_int_cost, temp_ext_cost, parts_num));
+        //cudaMemcpy(temp_int_cost, d_temp_int_cost, parts_num * sizeof(int), cudaMemcpyDeviceToHost);
+        //cudaMemcpy(temp_ext_cost, d_temp_ext_cost, parts_num * sizeof(int), cudaMemcpyDeviceToHost);
+        //printf("Cost after destroy %f \n", computeCost(temp_int_cost, temp_ext_cost, parts_num));
 
 
         //repair step
@@ -399,6 +417,9 @@ void lns_v1(int* in_parts, int parts_num, int nodes_num, int edges_num, int max_
     printf("Final cost is: %f\n", best_cost);
     
     //free
+    cudaHostUnregister(in_parts);
+    cudaHostUnregister(int_costs);
+    cudaHostUnregister(ext_costs);
     free(best);
     free(int_cost);
     free(ext_cost);
