@@ -13,22 +13,14 @@ void readInput(FILE *in_file, int *parts, int nodes_num, int edges_num, int part
     int weight;
     char line[100];
 
-    //printf("Number of nodes: %d \nNumber of edges: %d\n", nodes_num, edges_num);
-    //printf("Gathering nodes...\n");
-    int a;
+    int a; //unused, really
     for (int i = 0; i < nodes_num; i++){
         fgets(line, 100, in_file);
         sscanf(line, "%d %d", &a, &parts[i]);
-        //printf("Assigned node %d to partition %d\n", i, parts[i]);
     }
 
-    //checkPartsPerNode(partitions, parts_num, nodes_num);
     // gather edges
     printf("Gathering edges...\n");
-    /*
-    for (int i = 0; i < nodes_num*nodes_num; i++){
-        mat[i] = 0;
-    }*/
     int n1, n2;
     int off = 0;
     int current_node = 0;
@@ -36,6 +28,7 @@ void readInput(FILE *in_file, int *parts, int nodes_num, int edges_num, int part
     for (int i = 0; i < edges_num; i++){
         fgets(line, 100, in_file);
         sscanf(line, "%d %d %d", &n1, &n2, &weight);
+        // calculate start offset for CSR rep
         if (n1 > current_node){
             for (int j = current_node; j < n1; j++){
                 offsets[j+1] = i;

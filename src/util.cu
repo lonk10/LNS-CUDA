@@ -11,6 +11,7 @@ int computeMass(int ind, int *parts, int nodes_num, int *weights){
     return tot_mass;
 }
 
+// Checks that forall partitions Si, int_costs[Si] < max_mass
 int checkMass(int *int_costs, int parts_num, int max_mass){
     for (int i = 0; i < parts_num; i++){
         if (int_costs[i] > max_mass){
@@ -75,12 +76,15 @@ void computeEdgeCost(int *parts, int part_id, CSR *row_rep, CSC *col_rep, int pa
     ext_cost[part_id] = ext_res;
 }
 
+// legacy function
 void computeAllEdgeCost(int *parts, CSR *row_rep, CSC *col_rep, int parts_num, int nodes_num, int edges_num, int *int_costs, int *ext_costs){
     for (int i = 0; i < parts_num; i++){
         computeEdgeCost(parts, i, row_rep, col_rep, parts_num, nodes_num, edges_num, int_costs, ext_costs);
     }
 }
 
+
+// computes the internal (int_costs) and external (ext_costs) costs of all partitions (parts)
 void newComputeAllEdgeCost(int* parts, CSR* row_rep, CSC* col_rep, int parts_num, int nodes_num, int edges_num, int* int_costs, int* ext_costs) {
     for (int i = 0; i < parts_num; i++) {
         int_costs[i] = 0;
@@ -127,12 +131,12 @@ void newComputeAllEdgeCost(int* parts, CSR* row_rep, CSC* col_rep, int parts_num
 // Random functions
 
 
+// Computes a random mask of m unique values in the range 0..n
 void computeRandomMask(int* mask, int n, int m) {
     int i = 0;
     int max = n * m / 100;
-    //int *check = (int*) malloc(n*sizeof(int));
     int rand_node;
-    unsigned char *is_used = (unsigned char *) malloc(n*sizeof(unsigned char)); /* flags */
+    unsigned char *is_used = (unsigned char *) malloc(n*sizeof(unsigned char)); // flags
     for (int z = 0; z < n; z++) {
         is_used[z] = 0;
     }
@@ -143,11 +147,8 @@ void computeRandomMask(int* mask, int n, int m) {
         rand_node = rand() % (i+1);
         if (is_used[rand_node]) rand_node = i;
         mask[j++] = rand_node;
-        //printf("generated %d\n", rand_node);
         is_used[rand_node] = 1;
-        //printf("%d out of %d\n", i, max);
     }
-    //printf("finished generation\n");
     free(is_used);
 }
 

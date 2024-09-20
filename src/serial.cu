@@ -6,7 +6,7 @@
 #include "../include/init.cuh"
 #include "../include/util.cuh"
 
-
+// legacy debug functions
 void checkNodesPerPart(int *parts, int k, int n){
     int tot = 0;
     for (int i = 0; i < k*n; i++){
@@ -38,13 +38,18 @@ int *computeNodeCost(int *parts, int *weights, int parts_num, int nodes_num, int
     return costs;
 }
 
-
-
+// legacy
 void computeRandomAssignment(int * mask, int n, int m, int p){
     for (int i = 0; i < (n*m/100); i++){
         mask[i] = rand() % p;
     }
 }
+
+/*
+Removes the destr_nodes nodes in destr_mask from the graph partitioning, represented by parts
+int_costs and ext_costs are, respectively, the internal and external costs of the partitions
+these should be temporary arrays tied to the current lns iteration
+*/
 
 void destroy(int *parts, int k, int *destr_mask, int n, int destr_nodes, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
     int ind;
@@ -57,6 +62,11 @@ void destroy(int *parts, int k, int *destr_mask, int n, int destr_nodes, int *in
     }
 }
 
+/*
+Adds the destr_nodes nodes in destr_mask to the graph partitioning, represented by parts
+int_costs and ext_costs are, respectively, the internal and external costs of the partitions
+these should be temporary arrays tied to the current lns iteration
+*/
 void repair(int *parts, int *destr_mask, int n, int destr_nodes, int parts_num, int *int_costs, int *ext_costs, CSR *csr_rep, CSC *csc_rep){
     //int i = 0;
     int k;
@@ -88,27 +98,25 @@ void repair(int *parts, int *destr_mask, int n, int destr_nodes, int parts_num, 
     }
 }
 
-
+/*
+Serial implementation of Large Neighbourhood Search
+in_parts is a nodes_num-size array of values in {0...parts_num} representing the partition in which a node resides
+max_mass and m are the function paraments for the maximum value of F(Si) and the percentage of nodes to remove at each iteration
+row/col_rep are the CSR and CSC formats of the graph, where the values are the edge weights
+*/
 void lns_serial(int *in_parts, int parts_num, int nodes_num, int edges_num, int max_mass, int m, CSR *row_rep, CSC *col_rep){
     int *best = (int *) malloc(nodes_num*sizeof(int));
     for (int i = 0; i < nodes_num; i++){
         best[i] = in_parts[i];
     }
     //compute node costs
-    printf("a");
     int *int_cost = (int *)malloc(parts_num*sizeof(int));
     int *temp_int_cost = (int *)malloc(parts_num*sizeof(int));
-    printf("b");
     //computeNodeCost(best, weights, parts_num, nodes_num, node_cost);
     //compute edge costs
     int *ext_cost = (int *)malloc(parts_num*sizeof(int));
     int *temp_ext_cost = (int *)malloc(parts_num*sizeof(int));
     newComputeAllEdgeCost(best, row_rep, col_rep, parts_num, nodes_num, edges_num, int_cost, ext_cost);
-    printf("c");
-    /*
-    for (int j = 0; j < parts_num; j++){
-        printf("part %d: %d %d\n", j, int_cost[j], ext_cost[j]);
-    }*/
     float best_cost = computeCost(int_cost, ext_cost, parts_num);
     float new_cost;
     int destr_nodes = nodes_num*m/100;
@@ -129,17 +137,13 @@ void lns_serial(int *in_parts, int parts_num, int nodes_num, int edges_num, int 
         memcpy(temp_int_cost, int_cost, parts_num*sizeof(int));
         memcpy(temp_ext_cost, ext_cost, parts_num*sizeof(int));
 
-        //printf("Destroy step %d\n", iter);
         //destroy step
         computeRandomMask(destr_mask, nodes_num, m);
         destroy(temp, parts_num, destr_mask, nodes_num, destr_nodes, temp_int_cost, temp_ext_cost, row_rep, col_rep);
         printf("cost after destroy: %f\n", computeCost(temp_int_cost, temp_ext_cost, parts_num));
-        //printf("Repair step %d\n", iter);
         //repair step
-        //computeRandomAssignment(asgn_mask, nodes_num, m, parts_num);
         repair(temp, destr_mask, nodes_num, destr_nodes, parts_num, temp_int_cost, temp_ext_cost, row_rep, col_rep);
 
-        //printf("Accept step %d\n", iter);
         //accept step
         if (checkMass(int_cost, parts_num, max_mass)){
             new_cost = computeCost(temp_int_cost, temp_ext_cost, parts_num);
@@ -153,30 +157,10 @@ void lns_serial(int *in_parts, int parts_num, int nodes_num, int edges_num, int 
         //checkPartsPerNode(temp, parts_num, nodes_num);
     }
     printf("Final cost is: %f\n", best_cost);
-    /*
-    printf("Partitions were:\n");
-    for (int i = 0; i < parts_num; i++){
-        printf("Partition %d : ", i);
-        for (int j = 0; j < nodes_num; j++){
-            printf("%d", in_parts[i*nodes_num+j]);
-        }
-        printf("\n");
-    }
-    printf("Partitions are now:\n");
-    for (int i = 0; i < parts_num; i++){
-        printf("Partition %d : ", i);
-        for (int j = 0; j < nodes_num; j++){
-            printf("%d", best[i*nodes_num+j]);
-        }
-        printf("\n");
-    }*/
-    //printf("snip:\n");
     free(destr_mask);
-    //printf("snapp:\n");
     free(temp);
     free(int_cost);
     free(temp_int_cost);
     free(ext_cost);
     free(temp_ext_cost);
-    //printf("snoop:\n");
 }
