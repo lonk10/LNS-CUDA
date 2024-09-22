@@ -138,7 +138,8 @@ __global__ void assignToParts_v1(int n, int* nodes, int destr_nodes, int* parts,
         for (int i = start; i < end; i++){
             edge_node = r_indexes[i];
             if (parts[edge_node] == k){
-                sum_i += r_values[i];
+                res = r_values[i];
+                sum_i += res;
                 if (parts[node] != k) sum_e -= res; // remove edge from the outer ones if part is not the og
             } else {
                 sum_e += r_values[i];
@@ -149,7 +150,8 @@ __global__ void assignToParts_v1(int n, int* nodes, int destr_nodes, int* parts,
         for (int i = start; i < end; i++){
             edge_node = c_indexes[i];
             if (parts[edge_node] == k){
-                sum_i += c_values[i];
+                res = c_values[i];
+                sum_i += res;
                 if (parts[node] != k) sum_e -= res;
             } else {
                 sum_e += c_values[i];
@@ -238,9 +240,10 @@ __global__ void assignToBestPart_v1(int k, float* results, int n, int* nodes, in
 __global__ void gatherResults(int* out_i, int* out_e, int k, int* i_costs, int* e_costs, float* result, int n) {
     int ind = blockIdx.x * blockDim.x + threadIdx.x;
     if (ind < n) {
-        for (int i = 0; i < k; i++) {
-            result[ind * k + i] = computePartCost(2 * out_i[ind * k + i] + i_costs[i], out_e[ind * k + i] + e_costs[i]) - computePartCost(i_costs[i], e_costs[i]);
-        }
+        //for (int i = 0; i < k; i++) {
+        int i = blockIdx.y;
+        result[ind * k + i] = computePartCost(2 * out_i[ind * k + i] + i_costs[i], out_e[ind * k + i] + e_costs[i]) - computePartCost(i_costs[i], e_costs[i]);
+        //}
     }
 
 }
@@ -273,7 +276,7 @@ void repair_v1(int* parts, int k, int* destr_mask, int n, int destr_nodes, int m
                                                                                       c_offset, c_indexes, c_values,
                                                                                       out_i, out_e);
     cudaDeviceSynchronize();
-    gatherResults << <gridx, blockdim >> > (out_i, out_e, k, int_costs, ext_costs, d_result, destr_nodes);
+    gatherResults << <grid_dim, block_dim >> > (out_i, out_e, k, int_costs, ext_costs, d_result, destr_nodes);
     cudaDeviceSynchronize();
     assignToBestPart_v1 << <destr_nodes, k, 2 * k * sizeof(int) >> > (k, d_result, n, destr_mask, parts, int_costs, ext_costs, out_i, out_e);
     cudaDeviceSynchronize();
