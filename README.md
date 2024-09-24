@@ -1,6 +1,6 @@
 **LNS_CUDA**
 
-Serial and CUDA implementation of a Large Neighbourhood Search for undirect weighted graphs
+Serial and CUDA implementation of a Large Neighbourhood Search for directed weighted graphs
 
 **Compilation**
 
